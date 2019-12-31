@@ -1,0 +1,27 @@
+#!/usr/bin/perl
+# $Id$
+use strict;
+use warnings;
+local *OUT;
+
+open OUTF, "| gzip -c >/tmp/ht_fwd_sorted.txt.gz" or die "Can't create output fwd";
+open OUTR, "| LC_ALL=C sort -T /dev/shm -S 30% | gzip -c >/tmp/ht_rev_sorted.txt.gz" or die "Can't create output rev";
+while ( <> ) {
+  s/^\s+//;
+  my @F = split;
+  my $rev = reverse $F[1];
+  $rev =~ tr/ACGT/TGCA/;
+  if ($F[1] le $rev) {
+    print OUTF "$F[1] $F[0]\n";
+  } else {
+    print OUTR "$rev $F[0]\n";
+  }
+}
+close OUTF;
+close OUTR;
+exit 0;
+__END__
+ 447473 AAAAAAAAAAAAAAAAAAAA
+  12463 AAAAAAAAAAAAAAAAAAAC
+  65754 AAAAAAAAAAAAAAAAAAAG
+  22796 AAAAAAAAAAAAAAAAAAAT

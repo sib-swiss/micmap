@@ -1,0 +1,100 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+my $width = 100;
+die "Usage: $0 <FASTA files>" unless $#ARGV >= 0;
+local *FD;
+my $first;
+my $tmp = `mktemp junkXXXXXX.seq`;
+$tmp =~ s/\s+$//s;
+local *OUT;
+my $offset = 0;
+open OUT,">$tmp" or die "Can't write to $tmp : $!";
+print OUT ">Un\n";
+foreach my $file (@ARGV) {
+  open FD, $file or die "Can't open $file : $!";
+  my $s = <FD>;
+  my ($ac) = $s =~ /^>([^\|\s]+)/;
+  die "Can't grok $s" unless defined $ac;
+  if (length($ac) > 2 and $ac !~ /^NC_/) {
+    $first = $file unless defined $first;
+    my $seq = "N" x 1000;
+    while ( <FD> ) {
+      s/\s+$//s;
+      $seq .= $_;
+    }
+    unlink $file;
+    my $len = length $seq;
+    my $part = int($len / 1000);
+    my $rest = 1000 - ($len - $part * 1000);
+    $seq .= "N" x $rest;
+    $len = length $seq;
+    $part = int($len / 1000);
+    die "grmp" if $len != $part * 1000;
+    printf "%s\t%d\t%d\n",$ac,$offset,$len;
+    $seq =~ s/(.{$width})/$1\n/g;
+    $seq =~ s/\s+$//;
+    print OUT $seq, "\n";
+    $offset += $len;
+  }
+  close FD;
+}
+if (defined $first) {
+  rename $tmp,$first or die "Can't rename $tmp to $first : $!";
+}
+exit 0;
+__END__
+==> s0000.seq <==
+>1 dna:chromosome chromosome:GRCh37:1:1:249250621:1
+
+==> s0001.seq <==
+>2 dna:chromosome chromosome:GRCh37:2:1:243199373:1
+
+==> s0022.seq <==
+>X dna:chromosome chromosome:GRCh37:X:1:155270560:1
+
+==> s0023.seq <==
+>Y dna:chromosome chromosome:GRCh37:Y:2649521:59034049:1
+
+==> s0024.seq <==
+>MT gi|251831106|ref|NC_012920.1| Homo sapiens mitochondrion, complete genome
+
+==> s0025.seq <==
+>GL000207.1 dna:supercontig supercontig::GL000207.1:1:4262:1
+
+==> s0084.seq <==
+>NC_007605
+
+==> s0085.seq <==
+>hs37d5

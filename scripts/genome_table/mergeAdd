@@ -1,0 +1,77 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+local *INF;
+local *INR;
+
+die "Usage : $0 <fwd_file> <rev_file>" unless $#ARGV == 1;
+open INF, "gzip -dc $ARGV[0] |" or die "Can't read $ARGV[0]";
+open INR, "gzip -dc $ARGV[1] |" or die "Can't read $ARGV[1]";
+my $f = <INF>;
+my @FF = split /\s/, $f;
+my $r = <INR>;
+my @FR = split /\s/, $r;
+while ( defined($f) and defined($r) ) {
+  if ($FF[0] lt $FR[0]) {
+    print $f;
+    $f = <INF>;
+    @FF = split /\s/, $f if defined($f);
+  } elsif ($FR[0] lt $FF[0]) {
+    print $r;
+    $r = <INR>;
+    @FR = split /\s/, $r if defined($r);
+  } else {
+    printf "%s %d\n", $FF[0], $FF[1] + $FR[1];
+    $f = <INF>;
+    @FF = split /\s/, $f if defined($f);
+    $r = <INR>;
+    @FR = split /\s/, $r if defined($r);
+  }
+}
+while (defined $f) {
+  print $f;
+  $f = <INF>;
+}
+while (defined $r) {
+  print $r;
+  $r = <INR>;
+}
+close INF;
+close INR;
+exit 0;
+__END__
+AAAAAAAAAAAAAAAAAAAA 451278
+AAAAAAAAAAAAAAAAAAAC 12442
+AAAAAAAAAAAAAAAAAAAG 66081
+AAAAAAAAAAAAAAAAAAAT 23136

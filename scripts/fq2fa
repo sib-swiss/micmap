@@ -1,0 +1,38 @@
+#!/usr/bin/perl
+# $Id$
+use strict;
+use warnings;
+use Getopt::Long;
+my $MINnt = 68;
+my $MAXnt = 136;
+my $cut = 1;
+GetOptions("MINnt=i" => \$MINnt,
+	   "MAXnt=i" => \$MAXnt,
+	   "cut=i" => \$cut);
+while ( <> ) {
+  s/\s+$//s;
+  my $head = $_;
+  $_ = <>;
+  s/\s+$//s;
+  <>;
+  <>;
+  next if length($_) < $MINnt;
+  if (length($_) > $MAXnt) {
+    if ($cut != 0) {
+      $_ = substr $_, 0, $MAXnt;
+    } else {
+      next;
+    }
+  }
+  printf ">%s\n%s\n", $head, $_;
+}
+exit 0;
+__END__
+@WAOG7:08013:14948
+GACCCGCCCTC
++
+85//)///)//
+@WAOG7:01212:09331
+GGCAGACCACAGTGAGCTGCAGGGCAAGGCCCGGCTGCGGGCCCGGGACGTGGTGTGTGTTCTCATCTGTATTGAGTCCCTGTGCCAGCGCCACACGTGAGTG
++
+B9==<<;8===<<=<<<==>A>>8>?;C<?@<B<?=;;;=8=@7<<6<<;;=<===A?>>;B=C@=><<===9>>====8==<9939=A??;===<=<==@><

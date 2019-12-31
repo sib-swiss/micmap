@@ -1,0 +1,176 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+use Getopt::Long;
+use Storable;
+my $SNP = "/data/common_all_20151104.vcf.gz";
+GetOptions("SNP=s" => \$SNP);
+die "Usage : $0 [...] [ -SNP <file> ] <VCF>" unless -s $SNP;
+
+my %V;
+local *FD;
+if ( -s "$SNP.store_dump" ) {
+  %V = %{ retrieve "$SNP.store_dump" };
+} else {
+  open FD, "gzip -dc $SNP |" or die "Can't open $SNP : $!";
+  while ( <FD> ) {
+    next if /^#/;
+    my @F = split /\t/;
+    $F[0] =~ s/^chr//;
+    $F[0] = "M" if $F[0] eq "MT";
+    $V{$F[0]} = {} unless defined $V{$F[0]};
+    my $h = $V{$F[0]};
+    next if defined $h->{$F[1]};
+    die "grmp $_" if $F[3] =~ /,/;
+    $h->{$F[1]} = [ @F[2,3,4] ]; # keep id, ref and alt
+  }
+  close FD;
+  store \%V, "$SNP.store_dump";
+}
+my $headDone;
+my $cur = 0;
+if ($#ARGV >= 0) {
+  my $rest;
+  open FD, $ARGV[0] or die "Can't open $ARGV[0] : $!";
+  while ( <FD> ) {
+    if (/^#/) {
+      if (/^##SAMPLE=/) {
+	$rest = "";
+	print;
+      } else {
+	if (defined $rest) {
+	  $rest .= $_;
+	} else {
+	  print;
+	}
+      }
+      next;
+    }
+    last;
+  }
+  close FD;
+  if ($#ARGV > 0) {
+    for my $i (1 .. $#ARGV) {
+      open FD, $ARGV[$i] or die "Can't open $ARGV[$i] : $!";
+      while ( <FD> ) {
+	if (/^#/) {
+	  print if /^##SAMPLE=/;
+	  next;
+	}
+	last;
+      }
+      close FD;
+    }
+  }
+  print $rest;
+  $headDone = 1;
+}
+while ( <> ) {
+  if (/^#/) {
+    print unless defined $headDone;
+    next;
+  }
+  $headDone = 1;
+  my @F = split /\t/;
+  my $chrAC = $F[0];
+  $chrAC =~ s/^chr//;
+  $chrAC = "M" if $chrAC eq "MT";
+  my $id;
+  if (defined $V{$chrAC}) {
+    my $h = $V{$chrAC};
+    if (defined $h->{$F[1]}) {
+      my $A = $h->{$F[1]};
+      if ($F[3] eq $$A[1]) {
+	my @B = split /,/,$$A[2];
+	foreach my $s (@B) {
+	  if ($s eq $F[4]) {
+	    $id = $$A[0];
+	    last;
+	  }
+	}
+      }
+    }
+  }
+  unless (defined $id) {
+    $id = sprintf "rr%d", $cur;
+    $cur += 1;
+  }
+  $F[2] = $id;
+  print join("\t", @F);
+}
+exit 0;
+__END__
+==> /tmp/UWB1_289_chr1.vcf <==
+position	I/D	ref.nt	cnt	len
+##fileformat=VCF
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	UWB1_289
+1	10927	.	A	G	255	.	.	RD:AD	16:14
+1	10938	.	G	A	255	.	.	RD:AD	21:14
+1	11014	.	G	A	255	.	.	RD:AD	38:12
+1	11022	.	G	A	255	.	.	RD:AD	43:13
+1	11067	.	GC	G	255	.	.	RD:AD	42:8
+1	11070	.	G	C	255	.	.	RD:AD	45:8
+1	11075	.	A	G	255	.	.	RD:AD	0:41
+
+==> /tmp/UWB1_289_chr17.vcf <==
+position	I/D	ref.nt	cnt	len
+##fileformat=VCF
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	UWB1_289
+17	62007	.	C	A	255	.	.	RD:AD	0:17
+17	62026	.	G	A	255	.	.	RD:AD	0:18
+17	62074	.	G	A	255	.	.	RD:AD	0:17
+17	63245	.	C	T	255	.	.	RD:AD	1:16
+17	63259	.	T	C	255	.	.	RD:AD	0:22
+17	63304	.	A	G	255	.	.	RD:AD	0:48
+17	63396	.	G	A	255	.	.	RD:AD	0:37
+
+##fileformat=VCFv4.0
+##fileDate=20151104
+##source=dbSNP
+##dbSNP_BUILD_ID=146
+##reference=GRCh38.p2
+##phasing=partial
+##variationPropertyDocumentationUrl=ftp://ftp.ncbi.nlm.nih.gov/snp/specs/dbSNP_BitField_latest.pdf	
+##INFO=<ID=RS,Number=1,Type=Integer,Description="dbSNP ID (i.e. rs number)">
+##INFO [...]
+##INFO=<ID=NOV,Number=0,Type=Flag,Description="Rs cluster has non-overlapping allele sets. True when rs set has more than 2 alleles from different submissions and these sets share no alleles in common.">
+##FILTER=<ID=NC,Description="Inconsistent Genotype Submission For At Least One Sample">
+##INFO=<ID=CAF,Number=.,Type=String,Description="An ordered, comma delimited list of allele frequencies based on 1000Genomes, starting with the reference allele followed by alternate alleles as ordered in the ALT column. Where a 1000Genomes alternate allele is not in the dbSNPs alternate allele set, the allele is added to the ALT column.  The minor allele is the second largest value in the list, and was previuosly reported in VCF as the GMAF.  This is the GMAF reported on the RefSNP and EntrezSNP pages and VariationReporter">
+##INFO=<ID=COMMON,Number=1,Type=Integer,Description="RS is a common SNP.  A common SNP is one that has at least one 1000Genomes population with a minor allele of frequency >= 1% and for which 2 or more founders contribute to that minor allele frequency.">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+1	10177	rs367896724	A	AC	.	.	RS=367896724;RSPOS=10177;dbSNPBuildID=138;SSR=0;SAO=0;VP=0x050000020005170026000200;GENEINFO=DDX11L1:100287102;WGT=1;VC=DIV;R5;ASP;VLD;G5A;G5;KGPhase3;CAF=0.5747,0.4253;COMMON=1
+1	10352	rs555500075	T	TA	.	.	RS=555500075;RSPOS=10352;dbSNPBuildID=142;SSR=0;SAO=0;VP=0x050000020005170026000200;GENEINFO=DDX11L1:100287102;WGT=1;VC=DIV;R5;ASP;VLD;G5A;G5;KGPhase3;CAF=0.5625,0.4375;COMMON=1
+1	10352	rs145072688	T	TA	.	.	RS=145072688;RSPOS=10353;dbSNPBuildID=134;SSR=0;SAO=0;VP=0x050000020005000002000200;GENEINFO=DDX11L1:100287102;WGT=1;VC=DIV;R5;ASP;CAF=0.5625,0.4375;COMMON=1
+1	10616	rs376342519	CCGCCGTTGCAAAGGCGCGCCG	C	.	.	RS=376342519;RSPOS=10617;dbSNPBuildID=142;SSR=0;SAO=0;VP=0x050000020005040026000200;GENEINFO=DDX11L1:100287102;WGT=1;VC=DIV;R5;ASP;VLD;KGPhase3;CAF=0.006989,0.993;COMMON=1
+1	10642	rs558604819	G	A	.	.	RS=558604819;RSPOS=10642;dbSNPBuildID=142;SSR=0;SAO=0;VP=0x050000020005040024000100;GENEINFO=DDX11L1:100287102;WGT=1;VC=SNV;R5;ASP;VLD;KGPhase3;CAF=0.9958,0.004193;COMMON=1

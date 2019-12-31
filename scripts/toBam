@@ -1,0 +1,77 @@
+#!/bin/bash
+name=$1
+ref=b37
+tables=/home/tschuepb/Data/Genomes
+destdir=/tmp
+if [ "X$name" = "X" ]; then
+  echo "Usage: $0 name [destdir (default $destdir)]"
+  exit 1
+fi
+if [ $# -eq 2 ]; then
+  destdir=$2
+  if [ ! -d $destdir ]; then
+    echo "destdir must be a directory"
+    exit 1
+  fi
+fi
+for c in 1 5 9 13 17 21 25; do
+  c2=$((c+1))
+  c3=$((c+2))
+  c4=$((c+3))
+  numactl --physcpubind=0 --membind=0 \
+    GTLdecompress \
+      -g $tables/$ref/$ref.bin \
+      -r <(cat $destdir/${name}/{,M_}chr${c}[abcd]_[pNmg].gtl) \
+      -p -n -m -a \
+      -o SAM >$destdir/${name}/chr${c}.sam || rm $destdir/${name}/chr${c}.sam &
+  numactl --physcpubind=1 --membind=0 \
+    GTLdecompress \
+      -g $tables/$ref/$ref.bin \
+      -r <(cat $destdir/${name}/{,M_}chr${c3}[abcd]_[pNmg].gtl) \
+      -p -n -m -a \
+      -o SAM >$destdir/${name}/chr${c3}.sam || rm $destdir/${name}/chr${c3}.sam &
+  numactl --physcpubind=4 --membind=0 \
+    GTLdecompress \
+      -g $tables/$ref/$ref.bin \
+      -r <(cat $destdir/${name}/{,M_}chr${c2}[abcd]_[pNmg].gtl) \
+      -p -n -m -a \
+      -o SAM >$destdir/${name}/chr${c2}.sam || rm $destdir/${name}/chr${c2}.sam &
+  numactl --physcpubind=5 --membind=0 \
+    GTLdecompress \
+      -g $tables/$ref/$ref.bin \
+      -r <(cat $destdir/${name}/{,M_}chr${c4}[abcd]_[pNmg].gtl) \
+      -p -n -m -a \
+      -o SAM >$destdir/${name}/chr${c4}.sam || rm $destdir/${name}/chr${c4}.sam &
+  wait
+  if [[ ! -f $destdir/${name}/chr$c.sam ]]; then exit 1; fi
+  if [[ ! -f $destdir/${name}/chr$c3.sam ]]; then exit 1; fi
+  if [[ ! -f $destdir/${name}/chr$c2.sam ]]; then exit 1; fi
+  if [[ ! -f $destdir/${name}/chr$c4.sam ]]; then exit 1; fi
+  numactl --physcpubind=0 --membind=0 samtools view -bS <(cat $tables/$ref/header_$ref $destdir/${name}/chr$c.sam) > $destdir/${name}/chr$c.bam || rm $destdir/${name}/chr$c.bam &
+  numactl --physcpubind=1 --membind=0 samtools view -bS <(cat $tables/$ref/header_$ref $destdir/${name}/chr$c3.sam) > $destdir/${name}/chr$c3.bam || rm $destdir/${name}/chr$c3.bam &
+  numactl --physcpubind=4 --membind=0 samtools view -bS <(cat $tables/$ref/header_$ref $destdir/${name}/chr$c2.sam) > $destdir/${name}/chr$c2.bam || rm $destdir/${name}/chr$c2.bam &
+  numactl --physcpubind=5 --membind=0 samtools view -bS <(cat $tables/$ref/header_$ref $destdir/${name}/chr$c4.sam) > $destdir/${name}/chr$c4.bam || rm $destdir/${name}/chr$c4.bam &
+  wait
+  if [[ ! -f $destdir/${name}/chr$c.bam ]]; then exit 1; fi
+  if [[ ! -f $destdir/${name}/chr$c3.bam ]]; then exit 1; fi
+  if [[ ! -f $destdir/${name}/chr$c2.bam ]]; then exit 1; fi
+  if [[ ! -f $destdir/${name}/chr$c4.bam ]]; then exit 1; fi
+  rm $destdir/${name}/chr${c}.sam $destdir/${name}/chr${c3}.sam $destdir/${name}/chr${c2}.sam $destdir/${name}/chr${c4}.sam
+  numactl --physcpubind=0 --membind=0 samtools sort $destdir/${name}/chr$c.bam $destdir/${name}/chr${c}_sorted || rm $destdir/${name}/chr${c}_sorted.bam &
+  numactl --physcpubind=1 --membind=0 samtools sort $destdir/${name}/chr$c3.bam $destdir/${name}/chr${c3}_sorted || rm $destdir/${name}/chr${c3}_sorted.bam &
+  numactl --physcpubind=4 --membind=0 samtools sort $destdir/${name}/chr$c2.bam $destdir/${name}/chr${c2}_sorted || rm $destdir/${name}/chr${c2}_sorted.bam &
+  numactl --physcpubind=5 --membind=0 samtools sort $destdir/${name}/chr$c4.bam $destdir/${name}/chr${c4}_sorted || rm $destdir/${name}/chr${c4}_sorted.bam &
+  wait
+  if [[ ! -f $destdir/${name}/chr${c}_sorted.bam ]]; then exit 1; fi
+  if [[ ! -f $destdir/${name}/chr${c3}_sorted.bam ]]; then exit 1; fi
+  if [[ ! -f $destdir/${name}/chr${c2}_sorted.bam ]]; then exit 1; fi
+  if [[ ! -f $destdir/${name}/chr${c4}_sorted.bam ]]; then exit 1; fi
+  mv $destdir/${name}/chr${c}_sorted.bam $destdir/${name}/chr$c.bam
+  mv $destdir/${name}/chr${c2}_sorted.bam $destdir/${name}/chr$c2.bam
+  mv $destdir/${name}/chr${c3}_sorted.bam $destdir/${name}/chr$c3.bam
+  mv $destdir/${name}/chr${c4}_sorted.bam $destdir/${name}/chr$c4.bam
+done
+samtools merge -f $destdir/${name}.bam $destdir/${name}/chr{?,??}.bam || exit 1
+samtools index $destdir/${name}.bam || exit 1
+rm $destdir/${name}/chr{?,??}.bam
+exit 0

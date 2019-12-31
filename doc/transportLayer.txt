@@ -1,0 +1,79 @@
+organize in blocks
+
+2 kind of blocks:
+- data blocks, contain actual data, located at beginning of file
+- index blocks, contain index of data blocks and various dictionnaries,
+  located at the end of the file, block header is replicated at the end
+  (trailer) to make it easier to grab from the end
+
++================================+
++ block main header (24 bytes)   +
++--------------------------------+
++ block of data (depend on type) +
++================================+
+.                                .
+.                                .
+.                                .
+.                                .
++================================+
++ block main header (24 bytes)   +
++--------------------------------+
++ block of data (depend on type) +
++================================+
++ block main header (24 bytes)   +
++--------------------------------+
++ block of index                 +
++--------------------------------+
++ block main header (24 bytes)   +
++================================+
+
+block main header
+- GTL0 - 32-bit magic number (GTL - Genomic Transport Layer) + version (0 for starter)
+- block length - 32-bit
+- reference sequence index - 32-bit
+- reference min pos - 32-bit
+- reference max pos - 32-bit
+- header checksum - 8-bit
+- block flags - 24-bit
+  o data or index             - bit  0 - 0 = data     ; 1 = index
+
+then, for data blocks :
+
+  o paired reads              - bit  1 - 0 = single   ; 1 = pair
+  o fixed length              - bit  2 - 0 = variable ; 1 = all reads of the same length
+  o pair position block       - bit  3 - 0 = absent   ; 1 = present
+  o chimeric position block   - bit  4 - 0 = absent   ; 1 = present
+  o N mismatch block          - bit  5 - 0 = absent   ; 1 = present
+  o mismatch block            - bit  6 - 0 = absent   ; 1 = present
+  o cigar block               - bit  7 - 0 = absent   ; 1 = present
+  o unmapped block            - bit  8 - 0 = absent   ; 1 = present
+  o header block              - bit  9 - 0 = absent   ; 1 = present
+  o quality block             - bit 10 - 0 = absent   ; 1 = present
+  o multiple matches          - bit 11 - 0 = unique   ; 1 = multiple
+  o sorted by pos             - bit 12 - 0 = unknown  ; 1 = sorted
+
+and for index blocks (probably mutually exclusive...):
+
+  o dictionnary of reference  - bit  1 - 0 = absent   ; 1 = present
+  o dictionnary of header     - bit  2 - 0 = absent   ; 1 = present
+  o dictionnary of block      - bit  3 - 0 = absent   ; 1 = present
+  o dictionnary of compressor - bit  4 - 0 = absent   ; 1 = present
+
+Data block
+- checksum - 32-bit - e.g. Fletcher-32
+- number of elements - 32-bit (reads or pairs)
+- fixed read length - 32-bit (if flag "fixed length" is true: length ; if false: nb of byte used per length data)
+- for each of read_length pair_position chimeric_position N_mismatch_block mismatch_block ... quality_block
+  if the flag is true we get three 32-bit integers:
+  - block compressor index - 32-bit - 0 always means no compression
+  - block original size - 32-bit
+  - block compressed size - 32-bit
+- for each of read_length pair_position chimeric_position N_mismatch_block mismatch_block ... quality_block
+  if the flag is true we get the data block itself
+
+Index block
+- checksum - 32-bit - e.g. Fletcher-32
+- number of elements - 32-bit (reads or pairs)
+
+We want to be able to concatenate files, so index blocks should contain
+relative position information to the indexed blocks

@@ -1,0 +1,7 @@
+INCLUDE_DIRECTORIES(../)
+ADD_LIBRARY(avx512_Aligner OBJECT alignThread_paired.c)
+ADD_DEPENDENCIES(avx512_Aligner gtl_shared)
+SET_PROPERTY(SOURCE alignThread_paired.c PROPERTY COMPILE_FLAGS "-std=c11 ${CMAKE_C_AVX512F_FLAGS}")
+
+ADD_LIBRARY(avx512falign OBJECT fastalign_systolic.c)
+SET_PROPERTY(SOURCE fastalign_systolic.c PROPERTY COMPILE_FLAGS "${CMAKE_C_AVX512F_FLAGS}")

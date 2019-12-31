@@ -1,0 +1,129 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+#devcpt01_chris: zcat hg38_all_1_mapped.txt.gz |
+local *IN1;
+local *IN2;
+local *INn;
+my $base = $ARGV[0];
+open IN1, "gzip -dc ${base}_uniques.txt.gz |" or die "Can't open ${base}_uniques.txt.gz : $!";
+open IN2, "gzip -dc ${base}_dual.txt.gz |" or die "Can't open ${base}_dual.txt.gz : $!";
+open INn, "gzip -dc ${base}_multi.txt.gz |" or die "Can't open ${base}_multi.txt.gz : $!";
+my $c1 = <IN1>;
+my $ca1 = substr $c1, 0, 16;
+my $c2 = <IN2>;
+my $ca2 = substr $c2, 0, 16;
+my $cn = <INn>;
+my $can = substr $cn, 0, 16;
+my %C;
+while (defined($c1) or defined($c2) or defined($cn)) {
+  if (defined($c1) and (not defined($c2) or $ca1 le $ca2) and (not defined($cn) or $ca1 le $can)) {
+    my $oa = $ca1;
+    my $cnt1 = 0;
+    while ($ca1 eq $oa) {
+      $cnt1 += 1;
+      $c1 = <IN1>;
+      undef $ca1;
+      $ca1 = substr $c1, 0, 16 if defined $c1;
+    }
+    my $cnt2 = 0;
+    while (defined($c2) and $ca2 eq $oa) {
+      $cnt2 += 1;
+      $c2 = <IN2>;
+      undef $ca2;
+      $ca2 = substr $c2, 0, 16 if defined $c2;
+    }
+    my $cntn = 0;
+    while (defined($cn) and $can eq $oa) {
+      $cntn += 1;
+      $cn = <INn>;
+      undef $can;
+      $can = substr $cn, 0, 16 if defined $cn;
+    }
+    my $tag = sprintf "%d-%d-%d", $cnt1, $cnt2, $cntn;
+    $C{$tag} = 0 unless defined $C{$tag};
+    $C{$tag} += 1;
+    next;
+  }
+  if (defined($c2) and (not defined($c1) or $ca2 lt $ca1) and (not defined($cn) or $ca2 le $can)) {
+    my $oa = $ca2;
+    my $cnt2 = 0;
+    while (defined($c2) and $ca2 eq $oa) {
+      $cnt2 += 1;
+      $c2 = <IN2>;
+      undef $ca2;
+      $ca2 = substr $c2, 0, 16 if defined $c2;
+    }
+    my $cntn = 0;
+    while (defined($cn) and $can eq $oa) {
+      $cntn += 1;
+      $cn = <INn>;
+      undef $can;
+      $can = substr $cn, 0, 16 if defined $cn;
+    }
+    my $tag = sprintf "0-%d-%d", $cnt2, $cntn;
+    $C{$tag} = 0 unless defined $C{$tag};
+    $C{$tag} += 1;
+    next;
+  }
+  if (defined($cn) and (not defined($c1) or $can lt $ca1) and (not defined($c2) or $can lt $ca2)) {
+    my $oa = $can;
+    my $cntn = 0;
+    while (defined($cn) and $can eq $oa) {
+      $cntn += 1;
+      $cn = <INn>;
+      undef $can;
+      $can = substr $cn, 0, 16 if defined $cn;
+    }
+    my $tag = sprintf "0-0-%d", $cntn;
+    $C{$tag} = 0 unless defined $C{$tag};
+    $C{$tag} += 1;
+    next;
+  }
+}
+close IN1;
+close IN2;
+close INn;
+my @A = sort {my @F = split /-/,$a; my @G = split /-/,$b; $F[0] <=> $G[0] or $F[1] <=> $G[1] or $F[2] <=> $G[2]} keys %C;
+foreach my $tag (@A) {
+  printf "%s\t%d\n", $tag, $C{$tag};
+}
+exit 0;
+__END__
+hg38_all_1_mapped.txt.gz
+hg38_all_2_mapped.txt.gz
+hg38_all_dual.txt.gz
+hg38_all_multi.txt.gz
+hg38_all_n_mapped.txt.gz
+hg38_all_uniques.txt.gz

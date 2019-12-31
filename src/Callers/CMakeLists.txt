@@ -1,0 +1,57 @@
+IF(STANDALONE)
+	SET(GTL_LIB gtl_static)
+ELSE(STANDALONE)
+	SET(GTL_LIB gtl_shared)
+ENDIF(STANDALONE)
+
+#####################################################################################################
+## Profile library
+ADD_LIBRARY(prf OBJECT 
+            prf/io.c
+            prf/horizontal_sse41.c
+            prf/extprf_horizontal_sse41.c)
+SET_PROPERTY(SOURCE prf/horizontal_sse41.c prf/extprf_horizontal_sse41.c APPEND PROPERTY COMPILE_FLAGS ${CMAKE_C_SSE41_FLAGS})
+TARGET_INCLUDE_DIRECTORIES(prf INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/prf") 
+
+#####################################################################################################
+## HTS library
+FIND_PACKAGE(Git REQUIRED)
+INCLUDE(ExternalProject)
+INCLUDE(${PROJECT_SOURCE_DIR}/cmake/build_internal_htslib.cmake)
+
+#####################################################################################################
+## Executables
+ADD_EXECUTABLE(Nirvana Nirvana.c AnalyzeTags2.c AnalyzeTags3.c $<TARGET_OBJECTS:prf>)
+TARGET_INCLUDE_DIRECTORIES(Nirvana PRIVATE "$<TARGET_PROPERTY:prf,INTERFACE_INCLUDE_DIRECTORIES>;${HTSLIB_INCLUDE_DIRS}")
+SET_TARGET_PROPERTIES(Nirvana PROPERTIES COMPILE_DEFINITIONS "TAG_ANALYSIS_MODE=NIRVANA")
+ADD_DEPENDENCIES(Nirvana htslib)
+TARGET_LINK_LIBRARIES(Nirvana ${GTL_LIB} ${HTSLIB_LIBRARIES})
+
+ADD_EXECUTABLE(GTLcaller3  GTLcaller3.c AnalyzeTags2.c AnalyzeTags3.c $<TARGET_OBJECTS:prf>)
+SET_TARGET_PROPERTIES(GTLcaller3 PROPERTIES COMPILE_DEFINITIONS "TAG_ANALYSIS_MODE=CALLER")
+ADD_DEPENDENCIES(GTLcaller3 htslib)
+TARGET_LINK_LIBRARIES(GTLcaller3 ${GTL_LIB} ${HTSLIB_LIBRARIES})
+TARGET_INCLUDE_DIRECTORIES(GTLcaller3 PRIVATE "$<TARGET_PROPERTY:prf,INTERFACE_INCLUDE_DIRECTORIES>;${HTSLIB_INCLUDE_DIRS}")
+
+ADD_EXECUTABLE(GTLdiffCaller3  GTLdiffCaller3.c DiffAnalyzeTags.c $<TARGET_OBJECTS:prf>)
+SET_TARGET_PROPERTIES(GTLdiffCaller3 PROPERTIES COMPILE_DEFINITIONS "TAG_ANALYSIS_MODE=CALLER")
+ADD_DEPENDENCIES(GTLdiffCaller3 htslib)
+TARGET_LINK_LIBRARIES(GTLdiffCaller3 ${GTL_LIB} ${HTSLIB_LIBRARIES})
+TARGET_INCLUDE_DIRECTORIES(GTLdiffCaller3 PRIVATE "$<TARGET_PROPERTY:prf,INTERFACE_INCLUDE_DIRECTORIES>;${HTSLIB_INCLUDE_DIRS}")
+
+SET_PROPERTY(SOURCE GTLcaller_common.c APPEND PROPERTY INCLUDE_DIRECTORIES $<TARGET_PROPERTY:FastAlignLib,INTERFACE_INCLUDE_DIRECTORIES>)
+ADD_EXECUTABLE(GTLcaller GTLcaller.c GTLcaller_common.c $<TARGET_OBJECTS:FastAlignLib> $<TARGET_OBJECTS:json-c>)
+TARGET_INCLUDE_DIRECTORIES(GTLcaller PRIVATE "$<TARGET_PROPERTY:FastAlignLib,INTERFACE_INCLUDE_DIRECTORIES>;${HTSLIB_INCLUDE_DIRS}")
+ADD_DEPENDENCIES(GTLcaller htslib)
+TARGET_LINK_LIBRARIES(GTLcaller ${GTL_LIB} ${HTSLIB_LIBRARIES})
+
+ADD_EXECUTABLE(GTLdiffCaller GTLdiffCaller.c GTLcaller_common.c $<TARGET_OBJECTS:FastAlignLib> $<TARGET_OBJECTS:json-c>)
+TARGET_INCLUDE_DIRECTORIES(GTLdiffCaller PRIVATE "$<TARGET_PROPERTY:FastAlignLib,INTERFACE_INCLUDE_DIRECTORIES>;${HTSLIB_INCLUDE_DIRS}")
+TARGET_LINK_LIBRARIES(GTLdiffCaller ${GTL_LIB})
+
+INSTALL(TARGETS GTLcaller3
+                GTLdiffCaller3
+                Nirvana
+                GTLcaller
+                GTLdiffCaller
+        DESTINATION bin)

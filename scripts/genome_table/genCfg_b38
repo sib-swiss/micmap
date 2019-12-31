@@ -1,0 +1,130 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+die "Usage: $0 <FASTA files>" unless $#ARGV >= 0;
+local *FD;
+my @O;
+my @Cnt;
+my $maxOffset = 0xfffffff;
+my $lastNumId;
+my $vChr;
+for my $i (0 .. 15) { $O[$i] = 0; $Cnt[$i] = 0; }
+print "chr\tlen\tvirtChr\toffset\tAC\tSAMname\n";
+foreach my $file (@ARGV) {
+  open FD, $file or die "Can't open $file : $!";
+  my $s = <FD>;
+  my ($ac) = $s =~ /^>([^\|\s]+)/;
+  die "Can't grok $s" unless defined $ac;
+  my $len = 0;
+  while ( <FD> ) {
+    s/\s+$//s;
+    $len += length;
+  }
+  close FD;
+  my ($numId) = $ac =~ /^chr(\d+)$/;
+  unless (defined $numId) {
+    die "grmp numid" unless defined $lastNumId;
+    $numId = $lastNumId + 1;
+  }
+  $vChr = $numId;
+  $vChr = 0 if $vChr == 16;
+  if ($vChr > 16) {
+    for my $i (0 .. $#O) {
+      if ($O[$i] + $len <= $maxOffset and $Cnt[$i] < 3) {
+	$vChr = $i;
+	last;
+      }
+    }
+    if ($vChr > 16) {
+      die "I think we ran out of space";
+    }
+  }
+  $lastNumId = $numId;
+  printf "%d\t%d\t%d\t%d\t%s\t%s\n", $numId, $len, $vChr, $O[$vChr], $ac, $ac;
+  symlink $file, "$ac.seq" unless -s "$ac.seq";
+  $O[$vChr] += (int($len / 1000000) + 1) * 1000000;
+  $Cnt[$vChr] += 1;
+}
+exit 0;
+__END__
+chr	len	virtChr	offset	AC	SAMname
+1	248956422	1	0	NC_000001.11	chr1
+2	242193529	2	0	NC_000002.12	chr2
+3	198295559	3	0	NC_000003.12	chr3
+4	190214555	4	0	NC_000004.12	chr4
+5	181538259	5	0	NC_000005.10	chr5
+6	170805979	6	0	NC_000006.12	chr6
+7	159345973	7	0	NC_000007.14	chr7
+8	145138636	8	0	NC_000008.11	chr8
+9	138394717	9	0	NC_000009.12	chr9
+10	133797422	10	0	NC_000010.11	chr10
+11	135086622	11	0	NC_000011.10	chr11
+12	133275309	12	0	NC_000012.12	chr12
+13	114364328	13	0	NC_000013.11	chr13
+14	107043718	14	0	NC_000014.9	chr14
+15	101991189	15	0	NC_000015.10	chr15
+16	90338345	0	0	NC_000016.10	chr16
+17	83257441	8	147000000	NC_000017.11	chr17
+18	80373285	14	110000000	NC_000018.10	chr18
+19	58617616	13	120000000	NC_000019.10	chr19
+20	64444167	12	140000000	NC_000020.11	chr20
+21	46709983	11	140000000	NC_000021.9	chr21
+22	50818468	10	140000000	NC_000022.11	chr22
+23	156040895	15	110000000	NC_000023.11	chrX
+24	57227415	9	150000000	NC_000024.10	chrY
+25	16569	9	212000000	NC_012920.1	chrM
+
+==> s0000.seq <==
+>1 dna:chromosome chromosome:GRCh37:1:1:249250621:1
+
+==> s0001.seq <==
+>2 dna:chromosome chromosome:GRCh37:2:1:243199373:1
+
+==> s0022.seq <==
+>X dna:chromosome chromosome:GRCh37:X:1:155270560:1
+
+==> s0023.seq <==
+>Y dna:chromosome chromosome:GRCh37:Y:2649521:59034049:1
+
+==> s0024.seq <==
+>MT gi|251831106|ref|NC_012920.1| Homo sapiens mitochondrion, complete genome
+
+==> s0025.seq <==
+>GL000207.1 dna:supercontig supercontig::GL000207.1:1:4262:1
+
+==> s0084.seq <==
+>NC_007605
+
+==> s0085.seq <==
+>hs37d5

@@ -1,0 +1,22 @@
+# quick cheat sheet
+# 
+
+# test transport layer
+devcpt01_chris: hexdump -f gtl.hdf /tmp/test.gtl |head -9
+GTL ver 0 size 26559
+ cs e7 fill 0000 flags 09
+block type 0
+Fletcher32 checksum 47d7351e
+count 115
+fixed length 100
+reference 1
+min pos 13003 max pos 16428
+hdr offset 968 qs offset 3329
+
+# look at some coverage
+./GTLdecompress -r /tmp/delme1_p.gtl -p -o SAM|./grabem >c.sam
+samtools view -bS <(cat /scratch/fhgfs/chris/V1.2/header_hg19 c.sam) > c.bam
+samtools sort c.bam c_sorted
+mv c_sorted.bam c.bam 
+samtools index c.bam
+/home/chris/src/samtools/samtools ADVIEW -1 c.bam -c 1 -p 567590

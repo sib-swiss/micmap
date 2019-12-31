@@ -1,0 +1,216 @@
+#!/bin/bash
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+by=4
+idx=hg19
+acidx=undef
+binidx=undef
+size=30000
+filter=false
+
+function usage ()
+{
+  echo "Usage: $0 [options]" >&2
+  echo "" >&2
+  echo " -a <file>   AC index for fetchGWI [$acidx]" >&2
+  echo " -b <file>   binary index for fetchGWI [$binidx]" >&2
+  echo " -f          filter output in case of multiple matches [$filter]" >&2
+  echo " -h          this help text" >&2
+  echo " -j <int>    number of jobs to launch in parallel [$by]" >&2
+  echo " -n <str>    name tag of the reference genome [$idx]" >&2
+  echo " -s <int>    size of the tag files [$size]" >&2
+  exit 1
+}
+
+while getopts ":a:b:fhj:n:s:" opt; do
+  case $opt in
+    a)
+      acidx=$OPTARG
+      ;;
+    b)
+      binidx=$OPTARG
+      ;;
+    f)
+      filter=true
+      ;;
+    h)
+      usage
+      ;;
+    j)
+      by=$OPTARG
+      ;;
+    n)
+      idx=$OPTARG
+      ;;
+    s)
+      size=$OPTARG
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      usage
+      ;;
+    :)
+      echo "Option -$OPTARG requires an argument." >&2
+      usage
+      ;;
+  esac
+done
+if [ "X$acidx" = "Xundef" -o "X$binidx" = "Xundef" ]; then
+  if [ -f /data/${idx}/hs_idx.bin ]; then
+    acidx=/data/${idx}/ac_idx.txt
+    binidx=/data/${idx}/hs_idx.bin
+  else
+    acidx=/scratch/fhgfs/chris/${idx}/ac_idx.txt
+    binidx=/scratch/fhgfs/chris/${idx}/hs_idx.bin
+  fi
+fi
+if [ ! -f $acidx ]; then
+  echo "AC index file $acidx not found"
+  exit 1
+fi
+if [ ! -f $binidx ]; then
+  echo "Binary index file $binidx not found"
+  exit 1
+fi
+by10=$(( by * 10 ))
+hcnt=0
+for f in s_*_tag.txt; do
+  if [ -s `basename $f _tag.txt`_out.txt ]; then
+    echo "Already done $f"
+    continue
+  fi
+  lines=`wc -l $f | sed 's/ .*$//'`
+  if [ $lines -gt $size ]; then
+    base=`echo $f | sed 's/_tag.txt/_part_/'`
+    (( plen = ($lines / $by) + 1 ))
+    if [ $plen -gt $size ]; then
+      plen=$size
+    fi
+    split -d -a 5 -l $plen $f $base
+    cntf=`ls $base* | wc -l`
+    date
+    for p in $base*; do
+      # check that pairs are kept in the same file
+      cur=`echo $p | sed "s/^$base//;s/^00*//"`
+      (( next = $cur + 1 ))
+      np=$base$next
+      [ -f $np ] || np=${base}0$next
+      [ -f $np ] || np=${base}00$next
+      [ -f $np ] || np=${base}000$next
+      [ -f $np ] || np=${base}0000$next
+      if [ -f $np ]; then
+	if tail -n 1 $p | awk '{print $2}' | grep -q '1$'; then
+	  # ends with 1
+	  if head -n 1 $np | awk '{print $2}' | grep -q '2$'; then
+	    # starts with 2, need to pass 1 line back...
+	    head -n 1 $np >>$p
+	    mv $np $np.bak
+	    tail -n +2 $np.bak >$np
+	    rm $np.bak
+	  fi
+	fi
+      fi
+      cnt=`jobs | grep -vc Done`
+      cntProcs=`ps -ef | grep $USER | grep -v grep | grep -c fetchGWI`
+      while [ $cnt -ge $by -o $cntProcs -ge $by10 ]; do
+	sleep 10
+	cnt=`jobs | grep -vc Done`
+	cntProcs=`ps -ef | grep $USER | grep -v grep | grep -c fetchGWI`
+	[ $cnt -lt $by -a $cntProcs -lt $by10 ] && date
+      done
+      if [ -s /dev/shm/chris/${idx}_idx.$hcnt.bin ]; then
+	binidx=/dev/shm/chris/${idx}_idx.$hcnt.bin
+	(( hcnt = $hcnt + 1 ))
+	if [ ! -s /dev/shm/chris/${idx}_idx.$hcnt.bin ]; then
+	  hcnt=0
+	fi
+      fi
+      if $filter; then
+	echo "Starting $p of $cntf using $binidx (filtered)"
+	fetchGWI \
+	  -c \
+	  -a $acidx \
+	  -i $binidx \
+	  -f $p \
+	  | ./filterMulti \
+	  > ${p}_out &
+      else
+	echo "Starting $p of $cntf using $binidx"
+	fetchGWI \
+	  -c \
+	  -a $acidx \
+	  -i $binidx \
+	  -f $p \
+	  > ${p}_out &
+      fi
+    done
+    wait
+    date
+    echo "All $cntf pieces of $f done"
+    sleep 5
+    cat $base*_out >`basename $f _tag.txt`_out.txt
+    rm $base*
+  else
+    cnt=`jobs | grep -vc Done`
+    while [ $cnt -ge $by ]; do
+      sleep 10
+      cnt=`jobs | grep -vc Done`
+    done
+    if [ -s /dev/shm/chris/${idx}_idx.$hcnt.bin ]; then
+      binidx=/dev/shm/chris/${idx}_idx.$hcnt.bin
+      (( hcnt = $hcnt + 1 ))
+      if [ ! -s /dev/shm/chris/${idx}_idx.$hcnt.bin ]; then
+	hcnt=0
+      fi
+    fi
+    if $filter; then
+      echo "Starting $f using $binidx (filtered)"
+      fetchGWI \
+	-c \
+	-a $acidx \
+	-i $binidx \
+	-f $f \
+	| ./filterMulti \
+	> `basename $f _tag.txt`_out.txt &
+    else
+      echo "Starting $f using $binidx"
+      fetchGWI \
+	-c \
+	-a $acidx \
+	-i $binidx \
+	-f $f \
+	> `basename $f _tag.txt`_out.txt &
+    fi
+  fi
+done
+wait
+exit 0

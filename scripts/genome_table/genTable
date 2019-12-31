@@ -1,0 +1,109 @@
+#!/bin/bash
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+taggerDir=/home/chris/src/tagger
+scriptDir=/home/chris/src/MICMAP/genome_table
+baseLen=16
+extLen=2
+length=$((baseLen + extLen))
+
+name=$1
+inFile=${name}_idx.bin
+baseFile=${name}_${length}nt.txt.gz
+fwdFile=${name}_${length}nt_fwd_sorted.txt
+revFile=${name}_${length}nt_rev_sorted.txt
+unFile=${name}_${length}nt_all_uniques.txt.gz
+dualFile=${name}_${length}nt_all_dual.txt.gz
+multiFile=${name}_${length}nt_all_multi.txt.gz
+unMFile=${name}_${length}nt_all_1_mapped.txt.gz
+dualMFile=${name}_${length}nt_all_2_mapped.txt.gz
+multiMFile=${name}_${length}nt_all_n_mapped.txt.gz
+
+# FIXME - make sure the index is in RAM
+if [[ ! -s /dev/shm/chris/${name}_idx.0.bin ]]; then
+  mkdir /dev/shm/chris
+  cp ${name}_idx.bin /dev/shm/chris/${name}_idx.0.bin
+fi
+# mv /dev/shm/chris/${name}_idx.0.bin /dev/shm/chris/hg38_idx.0.bin 
+if [[ ! -s /dev/shm/chris/${name}_idx.0.bin ]]; then
+  echo "Please put fetchGWI index file /dev/shm/chris/${name}_idx.0.bin in place"
+  exit 1
+fi
+
+$taggerDir/dumpGWI -c $inFile \
+  | $taggerDir/decodeGWI -f - \
+  | perl -ne "if (/not complete/){\$t=substr \$_,0,25;\$c=substr \$_,24,1;\$t=~ s/\$c+\$//;print substr(\$t,0,$length),\"\\n\" if length(\$t)>=$length}else{print substr(\$_,0,$length),\"\\n\"}" \
+  | uniq -c \
+  | pigz -c >$baseFile
+zcat $baseFile | $scriptDir/splitFwdRev 2>&1 >$fwdFile | sort -T . | pigz -c >$revFile.gz
+pigz $fwdFile
+$scriptDir/mergeAdd $fwdFile.gz $revFile.gz | grep ' 1$' | sed 's/ 1$//' | pigz -c >$unFile
+$scriptDir/mergeAdd $fwdFile.gz $revFile.gz | grep ' 2$' | sed 's/ 2$//' | pigz -c >$dualFile
+$scriptDir/mergeAdd $fwdFile.gz $revFile.gz | perl -ane 'print $F[0],"\n" if $F[1] > 2' | pigz -c >$multiFile
+$scriptDir/count_mappable ${name}_${length}nt_all >${name}_${length}nt_mappable.txt
+split -d -a 4 -l 2000000 <(zcat $unFile) s_1_
+for f in s_1_*; do mv $f ${f}_tag.txt; done
+$scriptDir/runFilterLocal -j 8 -a $PWD/ac_idx.txt -b $PWD/${name}_idx.bin -n $name
+cat s_1_*_out.txt | pigz -c >$unMFile
+cnt1=`zcat $unFile | wc -l`
+cnt2=`zcat $unMFile |wc -l`
+echo "Lines in $unFile : $cnt1"
+echo "Lines in $unMFile : $cnt2"
+if [ $cnt2 -lt $cnt1 ]; then exit 1; fi
+rm s_1_*
+split -d -a 4 -l 2000000 <(zcat $dualFile) s_1_
+for f in s_1_*; do mv $f ${f}_tag.txt; done
+$scriptDir/runFilterLocal -j 8 -a $PWD/ac_idx.txt -b $PWD/${name}_idx.bin -n $name
+cat s_1_*_out.txt | pigz -c >$dualMFile
+cnt1=`zcat $dualFile | wc -l`
+cnt2=`zcat $dualMFile |wc -l`
+echo "Lines in $dualFile : $cnt1"
+echo "Lines in $dualMFile : $cnt2"
+if [ $cnt2 -lt $cnt1 ]; then exit 1; fi
+rm s_1_*
+split -d -a 4 -l 2000000 <(zcat $multiFile) s_1_
+for f in s_1_*; do mv $f ${f}_tag.txt; done
+ln -s $scriptDir/filterMulti .
+$scriptDir/runFilterLocal -f -j 8 -a $PWD/ac_idx.txt -b $PWD/${name}_idx.bin -n $name
+rm filterMulti
+cat s_1_*_out.txt | pigz -c >$multiMFile
+cnt1=`zcat $multiFile | wc -l`
+cnt2=`zcat $multiMFile |wc -l`
+echo "Lines in $multiFile : $cnt1"
+echo "Lines in $multiMFile : $cnt2"
+if [ $cnt2 -lt $cnt1 ]; then exit 1; fi
+rm s_1_*
+exit 0
+#/home/chris/src/MICMAP/encode_genome hg38.cfg
+mkdir tbl_${length}nt
+/home/chris/src/MICMAP/encode_UEM -c $PWD/$name.cfg -i $PWD/${name}_${length}nt -o $PWD/tbl_${length}nt/start0. -n A -P 23:60001-2699520 -P 23:154931044-155260560
+exit 0

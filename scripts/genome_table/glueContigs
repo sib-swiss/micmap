@@ -1,0 +1,116 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+my $width = 128;
+my $maxSize = 0x8000000;
+die "Usage: $0 <FASTA files>" unless $#ARGV >= 0;
+local *FD;
+local *OUT;
+my $curChr = 1;
+my $seq = "N" x 256;
+foreach my $file (@ARGV) {
+  open FD, $file or die "Can't open $file : $!";
+  my $s = <FD>;
+  my ($ac) = $s =~ /^>([^\|\s]+)/;
+  die "Can't grok $s" unless defined $ac;
+  my $curSeq = "";
+  while ( <FD> ) {
+    s/\s+$//s;
+    $curSeq .= $_;
+  }
+  #unlink $file;
+  if (length($seq) > 256 and (length($seq) + length($curSeq) + 256 > $maxSize)) {
+    my $fname = sprintf "chrom%u.seq",$curChr;
+    open OUT,">$fname" or die "Can't write to $fname : $!";
+    print OUT ">chr|chr$curChr\n";
+    $seq =~ s/(.{$width})/$1\n/g;
+    $seq =~ s/\s+$//;
+    print OUT $seq, "\n";
+    close OUT;
+    $seq = "N" x 256;
+    $curChr += 1;
+  }
+  my $len = length $seq;
+  my $part = int($len / 256);
+  my $rest = 256 - ($len - $part * 256);
+  $rest += 256 if $rest < 128;
+  $seq .= "N" x $rest;
+  my $offset = length($seq);
+  $len = length $seq;
+  $part = int($len / 256);
+  die "grmp" if $len != $part * 256;
+  $seq .= $curSeq;
+  printf "%s\tchr%d\t%d\t%d\n",$ac,$curChr,$offset,length($curSeq);
+  close FD;
+}
+if ($seq ne "") {
+  my $fname = sprintf "chrom%u.seq",$curChr;
+  open OUT,">$fname" or die "Can't write to $fname : $!";
+  print OUT ">chr|chr$curChr\n";
+  $seq =~ s/(.{$width})/$1\n/g;
+  $seq =~ s/\s+$//;
+  print OUT $seq, "\n";
+  close OUT;
+}
+exit 0;
+__END__
+==> s0000.seq <==
+>000000F 008783882:B~016816671:E~015167789:E~016969532:E ctg_linear 33290655 158361183|quiver
+
+==> s0001.seq <==
+>000001F 010358779:B~010632996:E~010632996:E~007745469:E ctg_linear 28764182 137922234|quiver
+
+==> s0002.seq <==
+>000002F 015368159:B~008168679:E~017602478:E~003181943:B ctg_linear 27830608 133714033|quiver
+
+==> s0003.seq <==
+>000003F 002433049:B~005865710:E~004517915:E~016044038:E ctg_linear 26681278 120773744|quiver
+
+==> s0004.seq <==
+>000004F 009601519:B~013053782:E~008658905:E~007745469:B ctg_linear 1532253 7123455|quiver
+
+==> s0005.seq <==
+>000005F 017511397:E~016998735:B~002348134:E~010287457:E ctg_linear 25330179 119097561|quiver
+
+==> s0006.seq <==
+>000006F 004851043:E~009600997:E~010287457:B~010287457:B ctg_linear 24510 8119|quiver
+
+==> s0007.seq <==
+>000007F 014002860:E~005804245:B~017546792:B~001600979:B ctg_linear 21716254 95362109|quiver
+
+==> s0008.seq <==
+>000008F 005991906:E~011206061:B~013698514:E~003936033:E ctg_linear 20570883 94729301|quiver
+
+==> s0009.seq <==
+>000009F 016388453:E~003247300:B~017385682:B~005531232:E ctg_linear 19456027 89956117|quiver

@@ -1,0 +1,690 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+my $width = 100;
+die "Usage: $0 <dir>" unless -d $ARGV[0];
+local *UN;
+local *RD;
+local *FD;
+my $offsetR = 0;
+my $offsetU = 0;
+open UN,">chrUn.fa" or die "Can't write to chrUn.fa : $!";
+print UN ">chrUn\n";
+open RD,">chrRd.fa" or die "Can't write to chrRd.fa : $!";
+print RD ">chrRd\n";
+my @A = glob "$ARGV[0]/*.fa";
+my @files = sort {
+  my ($ia) = $a =~ /\/chr([^_.]+)/;
+  my ($ib) = $b =~ /\/chr([^_.]+)/;
+  die "bad files $a $b" unless defined($ia) and defined($ib);
+  if ($ia =~ /^\d/ and $ib =~ /^\d/) {
+    return $ia <=> $ib;
+  } elsif ($ia =~ /^\d/) {
+    return -1;
+  } elsif ($ib =~ /^\d/) {
+    return 1;
+  } elsif ($ia eq "Un") {
+    return 0 if $ib eq "Un";
+    return 1;
+  } elsif ($ib eq "Un") {
+    return 1;
+  } else {
+    return $ia cmp $ib;
+  }
+} @A;
+foreach my $file (@files) {
+  open FD, $file or die "Can't open $file : $!";
+  my $s = <FD>;
+  my ($ac) = $s =~ /^>chr([^\|\s]+)/;
+  die "Can't grok $s" unless defined $ac;
+  if (length($ac) > 3) {
+    my $seq = "N" x 1000;
+    while ( <FD> ) {
+      s/\s+$//s;
+      $seq .= $_;
+    }
+    my $len = length $seq;
+    my $part = int($len / 1000);
+    my $rest = 1000 - ($len - $part * 1000);
+    $seq .= "N" x $rest;
+    $len = length $seq;
+    $part = int($len / 1000);
+    die "grmp" if $len != $part * 1000;
+    $seq =~ s/(.{$width})/$1\n/g;
+    $seq =~ s/\s+$//;
+    if ($ac =~ /_random$/) {
+      printf "chr%s\t%d\t%d\n",$ac,$offsetR,$len;
+      print RD $seq, "\n";
+      $offsetR += $len;
+    } elsif ($ac =~ /^Un_/) {
+      printf "chr%s\t%d\t%d\n",$ac,$offsetU,$len;
+      print UN $seq, "\n";
+      $offsetU += $len;
+    } else {
+      die "Can't grok kind $ac";
+    }
+  } else {
+    my $pos = rindex $file,"/";
+    die "grmp $file" unless $pos >= 0;
+    my $name = substr $file,$pos+1;
+    symlink $file,$name or die "Can't symlink $name to $file : $!";
+  }
+  close FD;
+}
+exit 0;
+__END__
+==> hg38.analysisSet.chroms/chr10.fa <==
+>chr10
+
+==> hg38.analysisSet.chroms/chr11.fa <==
+>chr11
+
+==> hg38.analysisSet.chroms/chr11_KI270721v1_random.fa <==
+>chr11_KI270721v1_random
+
+==> hg38.analysisSet.chroms/chr12.fa <==
+>chr12
+
+==> hg38.analysisSet.chroms/chr13.fa <==
+>chr13
+
+==> hg38.analysisSet.chroms/chr14.fa <==
+>chr14
+
+==> hg38.analysisSet.chroms/chr14_GL000009v2_random.fa <==
+>chr14_GL000009v2_random
+
+==> hg38.analysisSet.chroms/chr14_GL000194v1_random.fa <==
+>chr14_GL000194v1_random
+
+==> hg38.analysisSet.chroms/chr14_GL000225v1_random.fa <==
+>chr14_GL000225v1_random
+
+==> hg38.analysisSet.chroms/chr14_KI270722v1_random.fa <==
+>chr14_KI270722v1_random
+
+==> hg38.analysisSet.chroms/chr14_KI270723v1_random.fa <==
+>chr14_KI270723v1_random
+
+==> hg38.analysisSet.chroms/chr14_KI270724v1_random.fa <==
+>chr14_KI270724v1_random
+
+==> hg38.analysisSet.chroms/chr14_KI270725v1_random.fa <==
+>chr14_KI270725v1_random
+
+==> hg38.analysisSet.chroms/chr14_KI270726v1_random.fa <==
+>chr14_KI270726v1_random
+
+==> hg38.analysisSet.chroms/chr15.fa <==
+>chr15
+
+==> hg38.analysisSet.chroms/chr15_KI270727v1_random.fa <==
+>chr15_KI270727v1_random
+
+==> hg38.analysisSet.chroms/chr16.fa <==
+>chr16
+
+==> hg38.analysisSet.chroms/chr16_KI270728v1_random.fa <==
+>chr16_KI270728v1_random
+
+==> hg38.analysisSet.chroms/chr17.fa <==
+>chr17
+
+==> hg38.analysisSet.chroms/chr17_GL000205v2_random.fa <==
+>chr17_GL000205v2_random
+
+==> hg38.analysisSet.chroms/chr17_KI270729v1_random.fa <==
+>chr17_KI270729v1_random
+
+==> hg38.analysisSet.chroms/chr17_KI270730v1_random.fa <==
+>chr17_KI270730v1_random
+
+==> hg38.analysisSet.chroms/chr18.fa <==
+>chr18
+
+==> hg38.analysisSet.chroms/chr19.fa <==
+>chr19
+
+==> hg38.analysisSet.chroms/chr1.fa <==
+>chr1
+
+==> hg38.analysisSet.chroms/chr1_KI270706v1_random.fa <==
+>chr1_KI270706v1_random
+
+==> hg38.analysisSet.chroms/chr1_KI270707v1_random.fa <==
+>chr1_KI270707v1_random
+
+==> hg38.analysisSet.chroms/chr1_KI270708v1_random.fa <==
+>chr1_KI270708v1_random
+
+==> hg38.analysisSet.chroms/chr1_KI270709v1_random.fa <==
+>chr1_KI270709v1_random
+
+==> hg38.analysisSet.chroms/chr1_KI270710v1_random.fa <==
+>chr1_KI270710v1_random
+
+==> hg38.analysisSet.chroms/chr1_KI270711v1_random.fa <==
+>chr1_KI270711v1_random
+
+==> hg38.analysisSet.chroms/chr1_KI270712v1_random.fa <==
+>chr1_KI270712v1_random
+
+==> hg38.analysisSet.chroms/chr1_KI270713v1_random.fa <==
+>chr1_KI270713v1_random
+
+==> hg38.analysisSet.chroms/chr1_KI270714v1_random.fa <==
+>chr1_KI270714v1_random
+
+==> hg38.analysisSet.chroms/chr20.fa <==
+>chr20
+
+==> hg38.analysisSet.chroms/chr21.fa <==
+>chr21
+
+==> hg38.analysisSet.chroms/chr22.fa <==
+>chr22
+
+==> hg38.analysisSet.chroms/chr22_KI270731v1_random.fa <==
+>chr22_KI270731v1_random
+
+==> hg38.analysisSet.chroms/chr22_KI270732v1_random.fa <==
+>chr22_KI270732v1_random
+
+==> hg38.analysisSet.chroms/chr22_KI270733v1_random.fa <==
+>chr22_KI270733v1_random
+
+==> hg38.analysisSet.chroms/chr22_KI270734v1_random.fa <==
+>chr22_KI270734v1_random
+
+==> hg38.analysisSet.chroms/chr22_KI270735v1_random.fa <==
+>chr22_KI270735v1_random
+
+==> hg38.analysisSet.chroms/chr22_KI270736v1_random.fa <==
+>chr22_KI270736v1_random
+
+==> hg38.analysisSet.chroms/chr22_KI270737v1_random.fa <==
+>chr22_KI270737v1_random
+
+==> hg38.analysisSet.chroms/chr22_KI270738v1_random.fa <==
+>chr22_KI270738v1_random
+
+==> hg38.analysisSet.chroms/chr22_KI270739v1_random.fa <==
+>chr22_KI270739v1_random
+
+==> hg38.analysisSet.chroms/chr2.fa <==
+>chr2
+
+==> hg38.analysisSet.chroms/chr2_KI270715v1_random.fa <==
+>chr2_KI270715v1_random
+
+==> hg38.analysisSet.chroms/chr2_KI270716v1_random.fa <==
+>chr2_KI270716v1_random
+
+==> hg38.analysisSet.chroms/chr3.fa <==
+>chr3
+
+==> hg38.analysisSet.chroms/chr3_GL000221v1_random.fa <==
+>chr3_GL000221v1_random
+
+==> hg38.analysisSet.chroms/chr4.fa <==
+>chr4
+
+==> hg38.analysisSet.chroms/chr4_GL000008v2_random.fa <==
+>chr4_GL000008v2_random
+
+==> hg38.analysisSet.chroms/chr5.fa <==
+>chr5
+
+==> hg38.analysisSet.chroms/chr5_GL000208v1_random.fa <==
+>chr5_GL000208v1_random
+
+==> hg38.analysisSet.chroms/chr6.fa <==
+>chr6
+
+==> hg38.analysisSet.chroms/chr7.fa <==
+>chr7
+
+==> hg38.analysisSet.chroms/chr8.fa <==
+>chr8
+
+==> hg38.analysisSet.chroms/chr9.fa <==
+>chr9
+
+==> hg38.analysisSet.chroms/chr9_KI270717v1_random.fa <==
+>chr9_KI270717v1_random
+
+==> hg38.analysisSet.chroms/chr9_KI270718v1_random.fa <==
+>chr9_KI270718v1_random
+
+==> hg38.analysisSet.chroms/chr9_KI270719v1_random.fa <==
+>chr9_KI270719v1_random
+
+==> hg38.analysisSet.chroms/chr9_KI270720v1_random.fa <==
+>chr9_KI270720v1_random
+
+==> hg38.analysisSet.chroms/chrEBV.fa <==
+>chrEBV
+
+==> hg38.analysisSet.chroms/chrM.fa <==
+>chrM
+
+==> hg38.analysisSet.chroms/chrUn_GL000195v1.fa <==
+>chrUn_GL000195v1
+
+==> hg38.analysisSet.chroms/chrUn_GL000213v1.fa <==
+>chrUn_GL000213v1
+
+==> hg38.analysisSet.chroms/chrUn_GL000214v1.fa <==
+>chrUn_GL000214v1
+
+==> hg38.analysisSet.chroms/chrUn_GL000216v2.fa <==
+>chrUn_GL000216v2
+
+==> hg38.analysisSet.chroms/chrUn_GL000218v1.fa <==
+>chrUn_GL000218v1
+
+==> hg38.analysisSet.chroms/chrUn_GL000219v1.fa <==
+>chrUn_GL000219v1
+
+==> hg38.analysisSet.chroms/chrUn_GL000220v1.fa <==
+>chrUn_GL000220v1
+
+==> hg38.analysisSet.chroms/chrUn_GL000224v1.fa <==
+>chrUn_GL000224v1
+
+==> hg38.analysisSet.chroms/chrUn_GL000226v1.fa <==
+>chrUn_GL000226v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270302v1.fa <==
+>chrUn_KI270302v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270303v1.fa <==
+>chrUn_KI270303v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270304v1.fa <==
+>chrUn_KI270304v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270305v1.fa <==
+>chrUn_KI270305v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270310v1.fa <==
+>chrUn_KI270310v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270311v1.fa <==
+>chrUn_KI270311v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270312v1.fa <==
+>chrUn_KI270312v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270315v1.fa <==
+>chrUn_KI270315v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270316v1.fa <==
+>chrUn_KI270316v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270317v1.fa <==
+>chrUn_KI270317v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270320v1.fa <==
+>chrUn_KI270320v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270322v1.fa <==
+>chrUn_KI270322v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270329v1.fa <==
+>chrUn_KI270329v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270330v1.fa <==
+>chrUn_KI270330v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270333v1.fa <==
+>chrUn_KI270333v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270334v1.fa <==
+>chrUn_KI270334v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270335v1.fa <==
+>chrUn_KI270335v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270336v1.fa <==
+>chrUn_KI270336v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270337v1.fa <==
+>chrUn_KI270337v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270338v1.fa <==
+>chrUn_KI270338v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270340v1.fa <==
+>chrUn_KI270340v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270362v1.fa <==
+>chrUn_KI270362v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270363v1.fa <==
+>chrUn_KI270363v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270364v1.fa <==
+>chrUn_KI270364v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270366v1.fa <==
+>chrUn_KI270366v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270371v1.fa <==
+>chrUn_KI270371v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270372v1.fa <==
+>chrUn_KI270372v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270373v1.fa <==
+>chrUn_KI270373v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270374v1.fa <==
+>chrUn_KI270374v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270375v1.fa <==
+>chrUn_KI270375v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270376v1.fa <==
+>chrUn_KI270376v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270378v1.fa <==
+>chrUn_KI270378v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270379v1.fa <==
+>chrUn_KI270379v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270381v1.fa <==
+>chrUn_KI270381v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270382v1.fa <==
+>chrUn_KI270382v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270383v1.fa <==
+>chrUn_KI270383v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270384v1.fa <==
+>chrUn_KI270384v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270385v1.fa <==
+>chrUn_KI270385v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270386v1.fa <==
+>chrUn_KI270386v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270387v1.fa <==
+>chrUn_KI270387v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270388v1.fa <==
+>chrUn_KI270388v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270389v1.fa <==
+>chrUn_KI270389v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270390v1.fa <==
+>chrUn_KI270390v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270391v1.fa <==
+>chrUn_KI270391v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270392v1.fa <==
+>chrUn_KI270392v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270393v1.fa <==
+>chrUn_KI270393v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270394v1.fa <==
+>chrUn_KI270394v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270395v1.fa <==
+>chrUn_KI270395v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270396v1.fa <==
+>chrUn_KI270396v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270411v1.fa <==
+>chrUn_KI270411v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270412v1.fa <==
+>chrUn_KI270412v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270414v1.fa <==
+>chrUn_KI270414v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270417v1.fa <==
+>chrUn_KI270417v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270418v1.fa <==
+>chrUn_KI270418v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270419v1.fa <==
+>chrUn_KI270419v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270420v1.fa <==
+>chrUn_KI270420v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270422v1.fa <==
+>chrUn_KI270422v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270423v1.fa <==
+>chrUn_KI270423v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270424v1.fa <==
+>chrUn_KI270424v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270425v1.fa <==
+>chrUn_KI270425v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270429v1.fa <==
+>chrUn_KI270429v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270435v1.fa <==
+>chrUn_KI270435v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270438v1.fa <==
+>chrUn_KI270438v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270442v1.fa <==
+>chrUn_KI270442v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270448v1.fa <==
+>chrUn_KI270448v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270465v1.fa <==
+>chrUn_KI270465v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270466v1.fa <==
+>chrUn_KI270466v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270467v1.fa <==
+>chrUn_KI270467v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270468v1.fa <==
+>chrUn_KI270468v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270507v1.fa <==
+>chrUn_KI270507v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270508v1.fa <==
+>chrUn_KI270508v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270509v1.fa <==
+>chrUn_KI270509v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270510v1.fa <==
+>chrUn_KI270510v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270511v1.fa <==
+>chrUn_KI270511v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270512v1.fa <==
+>chrUn_KI270512v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270515v1.fa <==
+>chrUn_KI270515v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270516v1.fa <==
+>chrUn_KI270516v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270517v1.fa <==
+>chrUn_KI270517v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270518v1.fa <==
+>chrUn_KI270518v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270519v1.fa <==
+>chrUn_KI270519v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270521v1.fa <==
+>chrUn_KI270521v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270522v1.fa <==
+>chrUn_KI270522v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270528v1.fa <==
+>chrUn_KI270528v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270529v1.fa <==
+>chrUn_KI270529v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270530v1.fa <==
+>chrUn_KI270530v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270538v1.fa <==
+>chrUn_KI270538v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270539v1.fa <==
+>chrUn_KI270539v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270544v1.fa <==
+>chrUn_KI270544v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270548v1.fa <==
+>chrUn_KI270548v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270579v1.fa <==
+>chrUn_KI270579v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270580v1.fa <==
+>chrUn_KI270580v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270581v1.fa <==
+>chrUn_KI270581v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270582v1.fa <==
+>chrUn_KI270582v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270583v1.fa <==
+>chrUn_KI270583v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270584v1.fa <==
+>chrUn_KI270584v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270587v1.fa <==
+>chrUn_KI270587v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270588v1.fa <==
+>chrUn_KI270588v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270589v1.fa <==
+>chrUn_KI270589v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270590v1.fa <==
+>chrUn_KI270590v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270591v1.fa <==
+>chrUn_KI270591v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270593v1.fa <==
+>chrUn_KI270593v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270741v1.fa <==
+>chrUn_KI270741v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270742v1.fa <==
+>chrUn_KI270742v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270743v1.fa <==
+>chrUn_KI270743v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270744v1.fa <==
+>chrUn_KI270744v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270745v1.fa <==
+>chrUn_KI270745v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270746v1.fa <==
+>chrUn_KI270746v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270747v1.fa <==
+>chrUn_KI270747v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270748v1.fa <==
+>chrUn_KI270748v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270749v1.fa <==
+>chrUn_KI270749v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270750v1.fa <==
+>chrUn_KI270750v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270751v1.fa <==
+>chrUn_KI270751v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270752v1.fa <==
+>chrUn_KI270752v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270753v1.fa <==
+>chrUn_KI270753v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270754v1.fa <==
+>chrUn_KI270754v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270755v1.fa <==
+>chrUn_KI270755v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270756v1.fa <==
+>chrUn_KI270756v1
+
+==> hg38.analysisSet.chroms/chrUn_KI270757v1.fa <==
+>chrUn_KI270757v1
+
+==> hg38.analysisSet.chroms/chrX.fa <==
+>chrX
+
+==> hg38.analysisSet.chroms/chrY.fa <==
+>chrY
+
+==> hg38.analysisSet.chroms/chrY_KI270740v1_random.fa <==
+>chrY_KI270740v1_random

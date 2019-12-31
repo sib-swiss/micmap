@@ -1,0 +1,37 @@
+#!/usr/bin/perl
+# $Id$
+use strict;
+use warnings;
+my $base = 16;
+my $allOnes = 0;
+my $cur = "";
+my $curCnt = 0;
+my $buf;
+while ( <> ) {
+  my @F = split;
+  my $bs = substr $F[0], 0, $base;
+  if ($bs ne $cur) {
+    if ($allOnes == 1 and $curCnt <= 4) {
+      print $buf;
+    }
+    $cur = $bs;
+    $buf = "";
+    $allOnes = 1;
+    $curCnt = 0
+  }
+  if ($F[1] == 1) {
+    $buf .= $F[0] . "\n";
+    $curCnt += 1;
+  } else {
+    $allOnes = 0;
+  }
+}
+if ($allOnes == 1 and $curCnt <= 4) {
+  print $buf;
+}
+exit 0;
+__END__
+AAAAAAAAAAAAAAAAAAAA 898751
+AAAAAAAAAAAAAAAAAAAC 24905
+AAAAAAAAAAAAAAAAAAAG 131835
+AAAAAAAAAAAAAAAAAAAT 45932
