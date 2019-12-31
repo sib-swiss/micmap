@@ -1,8 +1,8 @@
-#micmap
+# micmap
 
 	Mapping of short reads in fastq format onto a reference
 
-##License
+## License
 
     Copyright (C) SIB  - Swiss Institute of Bioinformatics,   2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
     Copyright (C) UNIL - University of Lausanne, Switzerland       2019 Nicolas Guex and Christian Iseli
@@ -22,13 +22,13 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-##Authors
+## Authors
 
 	Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
 	Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
 	Repository: https://github.com/sib-swiss/micmap
 
-##Info
+## Info
 
 	Machine :	Unix
 	Language:	C
@@ -40,7 +40,7 @@
 
 
  
-##Build instructions
+## Build instructions
 
 - need to manually setup the json-c library in third-party subdirectory
 
