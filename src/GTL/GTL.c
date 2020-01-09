@@ -2229,9 +2229,9 @@ decompressBlock(void *dataBlock, const unsigned int size, TLBHEADER *thp, TLBDAT
 }
 //---------------------------------------------------------------
 
-// Basically same as decompressBlock but only count patterns
+// Basically same as decompressBlock but only count patterns in read 1
 unsigned int
-countPatInUnmappedBlock(void *dataBlock, unsigned int size, TLBHEADER *thp, unsigned int *patCnt1, unsigned int *patCnt2)
+countPat1InUnmappedBlock(void *dataBlock, unsigned int size, TLBHEADER *thp, unsigned int *patCnt1)
 {
 	TLBDATA td;
 	TLBDATA *tdp = &td;
@@ -2343,8 +2343,6 @@ countPatInUnmappedBlock(void *dataBlock, unsigned int size, TLBHEADER *thp, unsi
 				pl = len2 >> 2;
 				if ((len2 & 3) != 0)
 					pl += 1;
-				pat = ((tdp->packed4nt[0] & 0x3f) << 8) | tdp->packed4nt[1];
-				patCnt2[pat] += 1;
 				tdp->packed4nt += pl;
 			}
 		}
@@ -2352,6 +2350,114 @@ countPatInUnmappedBlock(void *dataBlock, unsigned int size, TLBHEADER *thp, unsi
 	free(tdp->len);
 	free(tdp->p4nt);
 	return tdp->cnt;
+}
+//---------------------------------------------------------------
+
+// Basically same as decompressBlock but only count patterns in read 2 when read 1 is not already flagged for filtering
+void
+countPat2InUnmappedBlock(void *dataBlock, unsigned int size, TLBHEADER *thp, unsigned int *patCnt1, unsigned int cutoff1, unsigned int *patCnt2)
+{
+	TLBDATA td;
+	TLBDATA *tdp = &td;
+	memset(tdp,0,sizeof(TLBDATA));
+	unsigned char *rp;
+	const int multi = (thp->flags_15_8 & kTLBHflagMultipleMatches) != 0;
+	if (multi)
+	{
+		memcpy(&tdp->fletcher32CS,dataBlock,4 * sizeof(unsigned int)); // get CS, cnt, lengthInfo and nbMatches
+		rp = dataBlock + 4 * sizeof(unsigned int);
+	}
+	else
+	{
+		memcpy(&tdp->fletcher32CS,dataBlock,3 * sizeof(unsigned int)); // get CS, cnt and lengthInfo
+		rp = dataBlock + 3 * sizeof(unsigned int);
+		tdp->nbMatches = 1;
+	}
+	// need to unpack the various blocks
+	if ((thp->flags_7_0 & kTLBHflagFixedLength) == 0)
+	{
+		memcpy(&tdp->readLen,rp,3 * sizeof(unsigned int));
+		rp += 3 * sizeof(unsigned int);
+	}
+	assert((thp->flags_7_0 & kTLBHflagPairPosBlock) == 0);
+	assert((thp->flags_7_0 & kTLBHflagPairChrPosBlock) == 0);
+	assert((thp->flags_7_0 & kTLBHflagNMismatchBlock) == 0);
+	if ((thp->flags_7_0 & kTLBHflagMismatchBlock) != 0)
+		for (unsigned int i = 0; i < tdp->nbMatches; i++)
+		{
+			memcpy(&tdp->mismatch[i],rp,3 * sizeof(unsigned int));
+			rp += 3 * sizeof(unsigned int);
+		}
+	assert((thp->flags_7_0 & kTLBHflagCigarBlock) == 0);
+	assert((thp->flags_15_8 & kTLBHflagHalfmapBlock) == 0);
+	if ((thp->flags_15_8 & kTLBHflagUnmappedBlock) != 0)
+	{
+		memcpy(&tdp->unmapped,rp,3 * sizeof(unsigned int));
+		rp += 3 * sizeof(unsigned int);
+	}
+	if ((thp->flags_15_8 & kTLBHflagHeaderBlock) != 0)
+	{
+		memcpy(&tdp->readHdr,rp,3 * sizeof(unsigned int));
+		rp += 3 * sizeof(unsigned int);
+	}
+	if ((thp->flags_15_8 & kTLBHflagQualityBlock) != 0)
+	{
+		memcpy(&tdp->readQual,rp,3 * sizeof(unsigned int));
+		rp += 3 * sizeof(unsigned int);
+	}
+	// get and uncompress the bits
+	if ((thp->flags_7_0 & kTLBHflagFixedLength) == 0)
+	{
+		tdp->len = malloc(tdp->readLen.origLen);
+		tdp->readLen.data = (unsigned char *)tdp->len;
+		simpleUncompress(&tdp->readLen,rp,&len_stat_d);
+		rp += tdp->readLen.packedLen;
+	}
+	if ((thp->flags_7_0 & kTLBHflagMismatchBlock) != 0)
+		for (unsigned int i = 0; i < tdp->nbMatches; i++)
+		{
+			tdp->mismatch[i].data = rp;
+			rp += tdp->mismatch[i].packedLen;
+		}
+	if ((thp->flags_15_8 & kTLBHflagUnmappedBlock) != 0)
+	{
+		tdp->p4nt = malloc(tdp->unmapped.origLen);
+		tdp->unmapped.data = tdp->p4nt;
+		simpleUncompress(&tdp->unmapped,rp,&unmapped_stat_d);
+		rp += tdp->unmapped.packedLen;
+		tdp->packed4nt = tdp->p4nt;
+	}
+	if (tdp->p4nt != NULL)
+	{
+		unsigned int i;
+		assert((thp->flags_7_0 & kTLBHflagPairedReads) != 0);
+		for (i = 0; i < tdp->cnt; i++)
+		{
+			unsigned int len1 = tdp->lengthInfo;
+			unsigned int len2 = tdp->lengthInfo;
+			if ((thp->flags_7_0 & kTLBHflagFixedLength) == 0)
+			{
+				len1 = tdp->len[2*i];
+				len2 = tdp->len[2*i+1];
+			}
+			unsigned int pl = len1 >> 2;
+			if ((len1 & 3) != 0)
+				pl += 1;
+			unsigned int pat = ((tdp->packed4nt[0] & 0x3f) << 8) | tdp->packed4nt[1];
+			tdp->packed4nt += pl;
+			pl = len2 >> 2;
+			if ((len2 & 3) != 0)
+				pl += 1;
+			if (patCnt1[pat] <= cutoff1)
+			{
+				pat = ((tdp->packed4nt[0] & 0x3f) << 8) | tdp->packed4nt[1];
+				patCnt2[pat] += 1;
+			}
+			tdp->packed4nt += pl;
+		}
+	}
+	free(tdp->len);
+	free(tdp->p4nt);
 }
 //---------------------------------------------------------------
 

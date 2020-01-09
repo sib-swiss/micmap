@@ -372,7 +372,7 @@ sort(char *fn, unsigned int chr, const char* ofprefix, int multi)
 			{
 				// we want this block
 				unsigned int size = th->blockLength - sizeof(TLBHEADER);
-				totalPairs += countPatInUnmappedBlock(rPos + sizeof(TLBHEADER),size,th,patCnt1,patCnt2);
+				totalPairs += countPat1InUnmappedBlock(rPos + sizeof(TLBHEADER),size,th,patCnt1);
 				fprintf(stderr,".");
 			}
 			rPos += th->blockLength;
@@ -395,7 +395,7 @@ sort(char *fn, unsigned int chr, const char* ofprefix, int multi)
 					fprintf(stderr,"HWHAP: too many patterns to filter at cutoff1 %u sa[0] %u sa[NPOSSIBILITIES/2] %u sa[NPOSSIBILITIES-1] %u\n",cutoff1,sa[0],sa[NPOSSIBILITIES/2],sa[NPOSSIBILITIES-1]);
 					return 1;
 				}
-				snprintf(patSuffix + 16 * filterBlocks,16,"_%c%c%c%c%c%c%c%c",
+				snprintf(patSuffix + 16 * filterBlocks,16,"_1%c%c%c%c%c%c%c%c",
 					"ACGT"[(chr >> (pairedFlag ? 18 : 16)) & 3],
 					"ACGT"[(i >> 12) & 3],
 					"ACGT"[(i >> 10) & 3],
@@ -409,23 +409,39 @@ sort(char *fn, unsigned int chr, const char* ofprefix, int multi)
 		}
 		if (pairedFlag)
 		{
+			rPos = readBuf;
+			rCnt = 0;
+			while (rCnt < fSize)
+			{
+				// we already checked the header CS above, so just proceed...
+				TLBHEADER *th = (TLBHEADER *) rPos;
+				if (th->chr == chr && (th->flags_15_8 & kTLBHflagMultipleMatches) == multi)
+				{
+					// we want this block
+					unsigned int size = th->blockLength - sizeof(TLBHEADER);
+					countPat2InUnmappedBlock(rPos + sizeof(TLBHEADER),size,th,patCnt1,cutoff1,patCnt2);
+					fprintf(stderr,".");
+				}
+				rPos += th->blockLength;
+				rCnt += th->blockLength;
+			}
+			fprintf(stderr,"\n");
 			memcpy(sa,patCnt2,NPOSSIBILITIES * sizeof(unsigned int));
 			qsort(sa,NPOSSIBILITIES,sizeof(unsigned int),intcompare);
 			cutoff2 = sa[NPOSSIBILITIES/2] + IQR99_MULT_FACTOR * (sa[NPOSSIBILITIES*99/100] - sa[NPOSSIBILITIES/100]);
-			unsigned int n = 0;
 			if (cutoff2 == 0)
 				cutoff2 = sa[NPOSSIBILITIES-1] + 1;
 			for (i = 0; i < NPOSSIBILITIES; i++)
 			{
 				if (patCnt2[i] > cutoff2)
 				{
-					n += patCnt2[i];
+					nbFiltered += patCnt2[i];
 					if (filterBlocks >= 0x100)
 					{
 						fprintf(stderr,"HWHAP: too many patterns to filter at cutoff2 %u sa[0] %u sa[NPOSSIBILITIES/2] %u sa[NPOSSIBILITIES-1] %u\n",cutoff2,sa[0],sa[NPOSSIBILITIES/2],sa[NPOSSIBILITIES-1]);
 						return 1;
 					}
-					snprintf(patSuffix + 16 * filterBlocks,16,"_%c%c%c%c%c%c%c%c",
+					snprintf(patSuffix + 16 * filterBlocks,16,"_2%c%c%c%c%c%c%c%c",
 						"ACGT"[(chr >> 16) & 3],
 						"ACGT"[(i >> 12) & 3],
 						"ACGT"[(i >> 10) & 3],
@@ -437,13 +453,11 @@ sort(char *fn, unsigned int chr, const char* ofprefix, int multi)
 					patOut2[i] = filterBlocks++;
 				}
 			}
-			if (n > nbFiltered)
-				nbFiltered = n;
 		}
 		free(sa);
 		printf("we will filter %u out of %u (%.2f %%) and use %u filterBlocks\n",nbFiltered,totalPairs,100.0*nbFiltered/totalPairs,filterBlocks);
 		// we will need less blocks to sort, but add a few blocks to output the filtered stuff
-		allBlocks -= nbFiltered / kBlockMaxCount;
+		// tricky to get right, might temporarily overflow -  allBlocks -= nbFiltered / kBlockMaxCount;
 		unmapBlocks -= nbFiltered / kBlockMaxCount;
 	}
 	PAIRDATA *allData = malloc(kBlockMaxCount * allBlocks * sizeof(PAIRDATA));

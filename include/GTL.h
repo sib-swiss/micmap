@@ -224,7 +224,8 @@ void initBuffers(GTLBUFFERS * const, const unsigned int, const unsigned int,
 void flushAllBuffers(GTLBUFFERS *G);
 TLBDATA * get_block(FlushQueue *fq);
 int flushBlock(FlushQueue *fq,TLBDATA **);
-unsigned int countPatInUnmappedBlock(void *, unsigned int, TLBHEADER *, unsigned int *, unsigned int *);
+unsigned int countPat1InUnmappedBlock(void *, unsigned int, TLBHEADER *, unsigned int *);
+void countPat2InUnmappedBlock(void *, unsigned int, TLBHEADER *, unsigned int *, unsigned int, unsigned int *);
 int readBlock(int, TLBHEADER*, TLBDATA*);
 int readDecompressBlock(int, TLBHEADER *, TLBDATA *, int);
 int preadDecompressBlock(int, off_t, TLBHEADER*, TLBDATA *, int);
