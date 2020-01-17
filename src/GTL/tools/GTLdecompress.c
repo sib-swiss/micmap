@@ -74,6 +74,7 @@ static int debug = 0;
 static VIRTUALCHR virtchr[kMAXCHRcnt];
 static unsigned int statMMpos[256];
 static unsigned int maxMMpos;
+static int gFilterSAM;
 
 typedef struct OPTIONS_struct {
 	int fromchr;
@@ -87,6 +88,7 @@ typedef struct OPTIONS_struct {
 	int decompressUnmapped;
 	int decompressHalfmapped;
 	int decompressChimeric;
+	int filterSAM;
 } OPTIONS;
 
 typedef struct _decodedSingle {
@@ -1735,6 +1737,10 @@ print_pair_SAM_p(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 {
 	for (unsigned int j = 0; j < tpp->nbMatches; j++)
 	{
+		if (gFilterSAM
+		    && (tpp->ppd[j][i].tag1pos + dpp->taglen1 >= virtchr[dpp->chr[j]].len
+				    || tpp->ppd[j][i].tag1pos + dpp->delta[j] + dpp->taglen2 >= virtchr[dpp->chr[j]].len))
+			continue;
 		printf("%.*s\t%d\t%s\t%d\t%d\t%dM\t=\t%d\t%d\t%.*s\t%.*s\n",
 					 dpp->hhlen1 - 1, dpp->hdr1 + 1,
 					 dpp->flag1[j],
@@ -1828,6 +1834,11 @@ print_pair_SAM_g(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 {
 	for (unsigned int j = 0; j < tpp->nbMatches; j++)
 	{
+		// FIXME - should compute total of deletions instead of just using 255 as a safety margin...
+		if (gFilterSAM
+		    && (tpp->ppd[j][i].tag1pos + dpp->taglen1 + 255 >= virtchr[dpp->chr[j]].len
+				    || tpp->ppd[j][i].tag1pos + dpp->delta[j] + dpp->taglen2 + 255 >= virtchr[dpp->chr[j]].len))
+			continue;
 		// get the cigar strings if they exist
 		unsigned int cigarpos_l = dpp->cigarposStart[j];
 		if (tpp->cigar[j][cigarpos_l] != kCIGARTERMINATOR)	// if not, normal decoding.
@@ -3017,6 +3028,8 @@ decompress(char *fn, OPTIONS *opt)
 		perror("open");
 		return 1;
 	}
+	// FIXME - not all that clean...  no better way yet
+	gFilterSAM = opt->filterSAM;
 	TLBDATA td;
 	allocBlock(&td, true);
 	while (1) {
@@ -3370,7 +3383,7 @@ main (int argc, char **argv)
 #ifdef __APPLE__
 	while ((c = getopt (argc, argv, "r:i:g:C:P:o:v:acdhmnpt:u")) != -1)
 #else
-	while ((c = getopt (argc, argv, "r:i:g:C:P:o:v:acdhmnpt:uR:D:")) != -1)
+	while ((c = getopt (argc, argv, "r:i:g:C:P:o:v:acdhmnpt:uR:D:f")) != -1)
 #endif
 	switch (c)
 	{
@@ -3470,6 +3483,10 @@ main (int argc, char **argv)
 			break;
 #endif
 
+		case 'f':
+			options.filterSAM = 1;
+			break;
+
 		case '?':
 			break;
 	}
@@ -3517,6 +3534,7 @@ main (int argc, char **argv)
 		printf("           -c                    : decompress chimeric tags\n");
 		printf("           -o outputType         : output type [%s]\n", PrintFuncs[outSelect].name);
 		printf("                                   note: for ADNIview, GTL file needs to be sorted !  only one kind of tag per call !!\n");
+		printf("           -f                    : filter SAM output - do not output pairs that extend beyond reference template\n");
 		printf("           -d                    : debug mode, prints line number of original fastQ input\n");
 		printf("                                   tag1 in stdo tag2 in stderr\n");
 		printf("                                   ./GTLdecompress -r /tmp/test_all.gtl -p -n -m -a -u -h -c -d >r1.fq 2>r2.fq\n");
