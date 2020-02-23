@@ -1,0 +1,810 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2020 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+local *FD;
+#my $f_raw = "S1660-1_b37_all_raw.txt.gz";
+#my $f_tromer = "tromer_S1660-1_MAP.txt.gz";
+#my $cfg = "/data6/b38/b38.cfg";
+#my $file = "/data6/b38/mm_RNAseq_clean_b38.txt";
+my $f_raw = shift @ARGV;
+my $f_tromer = shift @ARGV;
+my $cfg = shift @ARGV;
+my $file = shift @ARGV;
+my $debug;
+my @T;
+my @K;
+my $curOrd;
+my $curBase;
+my $expected;
+my $seen;
+my @G;
+my @C;
+my @L;
+my $noHalf = 1; # picard does not like half-mapped reads
+open FD, $cfg or die "Can't open $cfg : $!";
+while ( <FD> ) {
+  s/\s+$//s;
+  my @F = split /\t/;
+  next if $F[0] eq "chr";
+  $C[$F[0]] = $F[5];
+  $L[$F[0]] = $F[1];
+}
+close FD;
+open FD, $file or die "Can't open $file : $!";
+while ( <FD> ) {
+  my @F = split /\t/;
+  $G[$F[0]] = [] unless defined $G[$F[0]];
+  my $A = $G[$F[0]];
+  die "bug $_" if defined $$A[$F[1]];
+  $$A[$F[1]] = [ $F[6], $F[7], $F[8] ];
+}
+close FD;
+open FD, "gzip -dc $f_tromer |" or die "Can't open $f_tromer : $!";
+while ( <FD> ) {
+  s/\s+$//s;
+  my @F = split /\t/;
+  my $ord = $F[1];
+  last if defined($debug) and $ord >= 40;
+  next if defined $K[$ord];
+  my $cnt = $F[12];
+  my ($base,$id) = $F[5] =~ /^(\d+),(\d+)$/;
+  die "grmp $F[5]" unless defined $id;
+  if (defined $T[$ord]) {
+    die "grmp $ord != $curOrd" if $ord != $curOrd;
+    my $A = $T[$ord];
+    $seen += 1;
+    if ($curBase != $base) {
+      # kill those for now...
+      $K[$ord] = 1;
+      delete $T[$ord];
+      next;
+    }
+    if ($id < $$A[1]) {
+      my $A = $G[$base];
+      my $AE = $$A[$id];
+      die "missing $base $id at $_" unless defined $AE;
+      $T[$ord] = [ $base, $id, $_, @$AE ];
+    }
+  } else {
+    #warn "Expected $expected of $curOrd but seen $seen" if defined($expected) and $seen != $expected;
+    my $A = $G[$base];
+    my $AE = $$A[$id];
+    die "missing $base $id at $_" unless defined $AE;
+    $T[$ord] = [ $base, $id, $_, @$AE ];
+    $seen = 1;
+    $expected = $cnt;
+    $curOrd = $ord;
+    $curBase = $base;
+  }
+}
+#warn "Expected $expected of $curOrd but seen $seen" if defined($expected) and $seen != $expected;
+close FD;
+open FD, "gzip -dc $f_raw |" or die "Can't open $f_raw : $!";
+while ( <FD> ) {
+  my ($ord) = $_ =~ /^(\d+)00 /;
+  die "sync $_" unless defined $ord;
+  last if defined($debug) and $ord >= 40;
+  s/^.* FixedLen (\d+) //;
+  my $fixedLen;
+  if (s/^.* VariableLen //) {
+    $fixedLen = $1;
+  }
+  my $nbMatches;
+  my $headerChr;
+  if (s/ nbMatches (\d+) headerChr (\S+)\s*$//s) {
+    $nbMatches = $1;
+    $headerChr = $2;
+  }
+  die "Format $_" unless defined $headerChr;
+  my $Head1 = <FD>; #54 @NB551125:47:HC23TBGX5:1:11101:14939:1047 1:N:0:AGTCAA (40 NB551125:47:HC23TBGX5:1:11101:14939:1047)
+  $Head1 =~ s/^.*\(\d+ ([^)]+)\)\s+$/$1/s;
+  $Head1 = sprintf "%011u:%s", $ord, substr($Head1, 12);
+  my $Rev1 = 0;
+  my $Read1 = <FD>; #74 TGACAATGGTTTTGTAGNTAAACTTCTTGTAGTAGTTGTAGATTTTAGTGACACTCTTTACCCCAGGGTCTTCC
+  $Read1 =~ s/^\d+ Read1 \d+ //;
+  $Read1 =~ s/\s+$//s;
+  my $Len1 = length $Read1;
+  my $Qual1 = <FD>; #74 AAAAAEEEEEEEEEEEE#EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEAEEEEEEEEAEEEEEEEEEEEEEE
+  $Qual1 =~ s/^\d+ Qual1 \d+ //;
+  $Qual1 =~ s/\s+$//s;
+  my $Head2 = <FD>; #54 @NB551125:47:HC23TBGX5:1:11101:14939:1047 2:N:0:AGTCAA (40 NB551125:47:HC23TBGX5:1:11101:14939:1047)
+  $Head2 =~ s/^.*\(\d+ ([^)]+)\)\s+$/$1/s;
+  $Head2 = sprintf "%011u:%s", $ord, substr($Head2, 12);
+  my $Rev2 = 0;
+  my $Read2 = <FD>; #35 NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
+  $Read2 =~ s/^\d+ Read2 \d+ //;
+  $Read2 =~ s/\s+$//s;
+  my $Len2 = length $Read2;
+  my $Qual2 = <FD>; #35 ###################################
+  $Qual2 =~ s/^\d+ Qual2 \d+ //;
+  $Qual2 =~ s/\s+$//s;
+  if ($_ eq "flagChimera flagPairChrPos flagMismatch") {
+    my ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
+    my ($tag1pos, $tag2pos, $chr, $chr1, $rev1, $chr2, $rev2) = &readPCP;
+    $Rev1 = $rev1;
+    $Rev2 = $rev2;
+    my $MM0 = <FD>; #READ1 END ; READ2 END
+    if (defined($debug) or not defined($T[$ord])) {
+      if (($noHalf != 0 and $chr1 != $chr2) or $tag1pos + length($Read1) >= $L[$chr1] or $tag2pos + length($Read2) >= $L[$chr2]) {
+	# fixmate does not tolerate chimeras...
+	printf "%s\t77\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head1, $Read1, $Qual1;
+	printf "%s\t141\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head2, $Read2, $Qual2;
+      } else {
+	printf "%s\t%d\t%s\t%u\t254\t%uM\t%s\t%u\t0\t%s\t%s\n", $Head1, $flag1, $C[$chr1], $tag1pos, $Len1, $C[$chr2], $tag2pos, $Read1, $Qual1;
+	printf "%s\t%d\t%s\t%u\t254\t%uM\t%s\t%u\t0\t%s\t%s\n", $Head2, $flag2, $C[$chr2], $tag2pos, $Len2, $C[$chr1], $tag1pos, $Read2, $Qual2;
+      }
+    }
+  } elsif ($_ eq "flagHalfmap flagPairChrPos flagMismatch") {
+    my ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
+    my ($tag1pos, $tag2pos, $chr, $chr1, $rev1, $chr2, $rev2) = &readPCP;
+    $Rev1 = $rev1;
+    $Rev2 = $rev2;
+    my $MM0 = <FD>; #READ1 30 N 58 N END ; READ2 0 N 1 N 2 N 3 N 4 N 5 N 6 N 7 N 8 N 9 N 28 N 29 N 30 N 31 N 32 N 33 N 34 N END
+    if (defined($debug) or not defined($T[$ord])) {
+      my $cig1 = sprintf "%uM", $Len1;
+      my $cig2 = sprintf "%uM", $Len2;
+      if ($chr1 != 0 and $tag1pos == 0) {
+	my $iCnt = 0;
+	my $mCnt = $Len1;
+	$iCnt += 1;
+	$mCnt -= 1;
+	$tag1pos += 1;
+	$cig1 = sprintf "%uI%uM", $iCnt, $mCnt;
+      }
+      if ($chr2 != 0 and $tag2pos == 0) {
+	my $iCnt = 0;
+	my $mCnt = $Len2;
+	$iCnt += 1;
+	$mCnt -= 1;
+	$tag2pos += 1;
+	$cig2 = sprintf "%uI%uM", $iCnt, $mCnt;
+      }
+      if ($noHalf != 0 or ($chr1 == 0 and $tag2pos + length($Read2) >= $L[$chr2]) or ($chr2 == 0 and $tag1pos + length($Read1) >= $L[$chr1])) {
+	# mapping extends beyond end of reference - generate unmapped
+	printf "%s\t77\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head1, $Read1, $Qual1;
+	printf "%s\t141\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head2, $Read2, $Qual2;
+      } else {
+	if ($chr1 == 0) {
+	  printf "%s\t%d\t*\t0\t0\t*\t%s\t%u\t0\t%s\t%s\n", $Head1, $flag1, $C[$chr2], $tag2pos, $Read1, $Qual1;
+	} else {
+	  printf "%s\t%d\t%s\t%u\t254\t%s\t*\t0\t0\t%s\t%s\n", $Head1, $flag1, $C[$chr1], $tag1pos, $cig1, $Read1, $Qual1;
+	}
+	if ($chr2 == 0) {
+	  printf "%s\t%d\t*\t0\t0\t*\t%s\t%u\t0\t%s\t%s\n", $Head2, $flag2, $C[$chr1], $tag1pos, $Read2, $Qual2;
+	} else {
+	  printf "%s\t%d\t%s\t%u\t254\t%s\t*\t0\t0\t%s\t%s\n", $Head2, $flag2, $C[$chr2], $tag2pos, $cig2, $Read2, $Qual2;
+	}
+      }
+    }
+  } elsif ($_ eq "flagPairPos") {
+    my ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
+    my ($tag1pos, $tag2offset, $delta, $rev1, $rev2, $chr2) = &readPP;
+    $Rev1 = $rev1;
+    $Rev2 = $rev2;
+    if (defined($debug) or not defined($T[$ord])) {
+      printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head1, $flag1, $chrSAM, $tag1pos, $Len1, $tag1pos + $delta, $ilen, $Read1, $Qual1;
+      printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head2, $flag2, $chrSAM, $tag1pos + $delta, $Len2, $tag1pos, - $ilen, $Read2, $Qual2;
+    }
+    if ($nbMatches == 2) {
+      ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
+      ($tag1pos, $tag2offset, $delta, $rev1, $rev2, $chr2) = &readPP;
+      if (defined($debug) or not defined($T[$ord])) {
+	my $R1 = $Read1;
+	my $Q1 = $Qual1;
+	if ($Rev1 != $rev1) {
+	  $R1 = reverse $Read1;
+	  $R1 =~ tr/ACGT/TGCA/;
+	  $Q1 = reverse $Qual1;
+	}
+	my $R2 = $Read2;
+	my $Q2 = $Qual2;
+	if ($Rev2 != $rev2) {
+	  $R2 = reverse $Read2;
+	  $R2 =~ tr/ACGT/TGCA/;
+	  $Q2 = reverse $Qual2;
+	}
+	printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head1, $flag1, $chrSAM, $tag1pos, $Len1, $tag1pos + $delta, $ilen, $R1, $Q1;
+	printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head2, $flag2, $chrSAM, $tag1pos + $delta, $Len2, $tag1pos, - $ilen, $R2, $Q2;
+      }
+    }
+  } elsif ($_ eq "flagPairPos flagMismatch") {
+    my ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
+    my ($tag1pos, $tag2offset, $delta, $rev1, $rev2, $chr2) = &readPP;
+    $Rev1 = $rev1;
+    $Rev2 = $rev2;
+    my $MM0 = <FD>; #READ1 62 A END ; READ2 31 N 32 N 52 N 53 N 64 N 65 N END
+    if (defined($debug) or not defined($T[$ord])) {
+      my $cig1 = sprintf "%uM", $Len1;
+      my $cig2 = sprintf "%uM", $Len2;
+      # fix 0 coordinate
+      if ($tag1pos == 0) {
+	my $iCnt = 0;
+	my $mCnt = $Len1;
+	$iCnt += 1;
+	$mCnt -= 1;
+	$tag1pos += 1;
+	$delta -= 1;
+	$cig1 = sprintf "%uI%uM", $iCnt, $mCnt;
+	if ($ilen < 0) {
+	  $ilen += 1;
+	} else {
+	  $ilen -= 1;
+	}
+      }
+      if ($tag1pos + $delta == 0) {
+	my $iCnt = 0;
+	my $mCnt = $Len2;
+	$iCnt += 1;
+	$mCnt -= 1;
+	$delta += 1;
+	$cig2 = sprintf "%uI%uM", $iCnt, $mCnt;
+	if ($ilen < 0) {
+	  $ilen += 1;
+	} else {
+	  $ilen -= 1;
+	}
+      }
+      if ($tag1pos + $delta < 0 or $tag1pos + length($Read1) >= $chrLen or $tag1pos + $delta + length($Read2) >= $chrLen) {
+        # Mate is at a negative coordinate... make the pair unmapped for now
+	printf "%s\t77\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head1, $Read1, $Qual1;
+	printf "%s\t141\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head2, $Read2, $Qual2;
+      } else {
+	printf "%s\t%d\t%s\t%u\t254\t%s\t=\t%u\t%d\t%s\t%s\n", $Head1, $flag1, $chrSAM, $tag1pos, $cig1, $tag1pos + $delta, $ilen, $Read1, $Qual1;
+	printf "%s\t%d\t%s\t%u\t254\t%s\t=\t%u\t%d\t%s\t%s\n", $Head2, $flag2, $chrSAM, $tag1pos + $delta, $cig2, $tag1pos, - $ilen, $Read2, $Qual2;
+      }
+    }
+    if ($nbMatches == 2) {
+      ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
+      ($tag1pos, $tag2offset, $delta, $rev1, $rev2, $chr2) = &readPP;
+      my $MM1 = <FD>; #READ1 62 A END ; READ2 31 N 32 N 52 N 53 N 64 N 65 N END
+      if (defined($debug) or not defined($T[$ord])) {
+	my $R1 = $Read1;
+	my $Q1 = $Qual1;
+	if ($Rev1 != $rev1) {
+	  $R1 = reverse $Read1;
+	  $R1 =~ tr/ACGT/TGCA/;
+	  $Q1 = reverse $Qual1;
+	}
+	my $R2 = $Read2;
+	my $Q2 = $Qual2;
+	if ($Rev2 != $rev2) {
+	  $R2 = reverse $Read2;
+	  $R2 =~ tr/ACGT/TGCA/;
+	  $Q2 = reverse $Qual2;
+	}
+	printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head1, $flag1, $chrSAM, $tag1pos, $Len1, $tag1pos + $delta, $ilen, $R1, $Q1;
+	printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head2, $flag2, $chrSAM, $tag1pos + $delta, $Len2, $tag1pos, - $ilen, $R2, $Q2;
+      }
+    }
+  } elsif ($_ eq "flagPairPos flagMismatch flagCigar") {
+    my ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
+    my ($tag1pos, $tag2offset, $delta, $rev1, $rev2, $chr2) = &readPP;
+    $Rev1 = $rev1;
+    $Rev2 = $rev2;
+    my $MM0 = <FD>; #READ1 62 A END ; READ2 31 N 32 N 52 N 53 N 64 N 65 N END
+    my ($cig1, $cig2, $lc1, $lc2) = &readCigar;
+    if (defined($debug) or not defined($T[$ord])) {
+      if ($cig1 eq "") {
+	$lc1 = $Len1;
+	$cig1 = sprintf "%uM", $Len1;
+      }
+      if ($cig2 eq "") {
+	$lc2 = $Len2;
+	$cig2 = sprintf "%uM", $Len2;
+      }
+      if ($tag1pos + $delta < 0 or $tag1pos + $lc1 >= $chrLen or $tag1pos + $delta + $lc2 >= $chrLen) {
+        # Mate is at a negative coordinate... make the pair unmapped for now
+	printf "%s\t77\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head1, $Read1, $Qual1;
+	printf "%s\t141\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head2, $Read2, $Qual2;
+      } else {
+	# fix 0 coordinate
+	if ($tag1pos == 0) {
+	  if ($cig1 =~ s/^(\d+)I(\d+)M//) {
+	    my $iCnt = $1;
+	    my $mCnt = $2;
+	    $iCnt += 1;
+	    $mCnt -= 1;
+	    $tag1pos += 1;
+	    $delta -= 1;
+	    $cig1 = sprintf "%uI%uM%s", $iCnt, $mCnt, $cig1;
+	    if ($ilen < 0) {
+	      $ilen += 1;
+	    } else {
+	      $ilen -= 1;
+	    }
+	  } elsif ($cig1 =~ s/^(\d+)M//) {
+	    my $iCnt = 0;
+	    my $mCnt = $1;
+	    $iCnt += 1;
+	    $mCnt -= 1;
+	    $tag1pos += 1;
+	    $delta -= 1;
+	    $cig1 = sprintf "%uI%uM%s", $iCnt, $mCnt, $cig1;
+	    if ($ilen < 0) {
+	      $ilen += 1;
+	    } else {
+	      $ilen -= 1;
+	    }
+	  } else {
+	    warn "$Head1, $flag1, $chrSAM, $tag1pos, $cig1, $tag1pos + $delta, $ilen, $Read1, $Qual1";
+	  }
+	}
+	if ($tag1pos + $delta == 0) {
+	  if ($cig2 =~ s/^(\d+)I(\d+)M//) {
+	    my $iCnt = $1;
+	    my $mCnt = $2;
+	    $iCnt += 1;
+	    $mCnt -= 1;
+	    $delta += 1;
+	    $cig2 = sprintf "%uI%uM%s", $iCnt, $mCnt, $cig2;
+	    if ($ilen < 0) {
+	      $ilen += 1;
+	    } else {
+	      $ilen -= 1;
+	    }
+	  } elsif ($cig2 =~ s/^(\d+)M//) {
+	    my $iCnt = 0;
+	    my $mCnt = $1;
+	    $iCnt += 1;
+	    $mCnt -= 1;
+	    $delta += 1;
+	    $cig2 = sprintf "%uI%uM%s", $iCnt, $mCnt, $cig2;
+	    if ($ilen < 0) {
+	      $ilen += 1;
+	    } else {
+	      $ilen -= 1;
+	    }
+	  } else {
+	    warn "$Head2, $flag2, $chrSAM, $tag1pos + $delta, $cig2, $tag1pos, - $ilen, $Read2, $Qual2";
+	  }
+	}
+	printf "%s\t%d\t%s\t%u\t254\t%s\t=\t%u\t%d\t%s\t%s\n", $Head1, $flag1, $chrSAM, $tag1pos, $cig1, $tag1pos + $delta, $ilen, $Read1, $Qual1;
+	printf "%s\t%d\t%s\t%u\t254\t%s\t=\t%u\t%d\t%s\t%s\n", $Head2, $flag2, $chrSAM, $tag1pos + $delta, $cig2, $tag1pos, - $ilen, $Read2, $Qual2;
+      }
+    }
+    if ($nbMatches == 2) {
+      ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
+      ($tag1pos, $tag2offset, $delta, $rev1, $rev2, $chr2) = &readPP;
+      my $MM1 = <FD>; #READ1 62 A END ; READ2 31 N 32 N 52 N 53 N 64 N 65 N END
+      ($cig1, $cig2, $lc1, $lc2) = &readCigar;
+      if (defined($debug) or not defined($T[$ord])) {
+	if ($cig1 eq "") {
+	  $lc1 = $Len1;
+	  $cig1 = sprintf "%uM", $Len1;
+	}
+	if ($cig2 eq "") {
+	  $lc2 = $Len2;
+	  $cig2 = sprintf "%uM", $Len2;
+	}
+	if ($tag1pos == 0 or $tag1pos + $delta <= 0 or $tag1pos + $lc1 >= $chrLen or $tag1pos + $delta + $lc2 >= $chrLen) {
+	  # Read pos is 0 or mate is at zero or a negative coordinate... make the pair unmapped for now
+	  # Since this is the second match... just print nothing
+	} else {
+	  my $R1 = $Read1;
+	  my $Q1 = $Qual1;
+	  if ($Rev1 != $rev1) {
+	    $R1 = reverse $Read1;
+	    $R1 =~ tr/ACGT/TGCA/;
+	    $Q1 = reverse $Qual1;
+	  }
+	  my $R2 = $Read2;
+	  my $Q2 = $Qual2;
+	  if ($Rev2 != $rev2) {
+	    $R2 = reverse $Read2;
+	    $R2 =~ tr/ACGT/TGCA/;
+	    $Q2 = reverse $Qual2;
+	  }
+	  printf "%s\t%d\t%s\t%u\t254\t%s\t=\t%u\t%d\t%s\t%s\n", $Head1, $flag1, $chrSAM, $tag1pos, $cig1, $tag1pos + $delta, $ilen, $R1, $Q1;
+	  printf "%s\t%d\t%s\t%u\t254\t%s\t=\t%u\t%d\t%s\t%s\n", $Head2, $flag2, $chrSAM, $tag1pos + $delta, $cig2, $tag1pos, - $ilen, $R2, $Q2;
+	}
+      }
+    }
+  } elsif ($_ eq "flagPairPos flagNMismatch") {
+    my ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
+    my ($tag1pos, $tag2offset, $delta, $rev1, $rev2, $chr2) = &readPP;
+    $Rev1 = $rev1;
+    $Rev2 = $rev2;
+    my $MMN0 = <FD>; #READ1 END ; READ2 12 22 23 30 31 32 33 41 42 51 52 53 63 64 65 END
+    if (defined($debug) or not defined($T[$ord])) {
+      printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head1, $flag1, $chrSAM, $tag1pos, $Len1, $tag1pos + $delta, $ilen, $Read1, $Qual1;
+      printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head2, $flag2, $chrSAM, $tag1pos + $delta, $Len2, $tag1pos, - $ilen, $Read2, $Qual2;
+    }
+    if ($nbMatches == 2) {
+      ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
+      ($tag1pos, $tag2offset, $delta, $rev1, $rev2, $chr2) = &readPP;
+      my $MMN1 = <FD>; #READ1 END ; READ2 12 22 23 30 31 32 33 41 42 51 52 53 63 64 65 END
+      if (defined($debug) or not defined($T[$ord])) {
+	my $R1 = $Read1;
+	my $Q1 = $Qual1;
+	if ($Rev1 != $rev1) {
+	  $R1 = reverse $Read1;
+	  $R1 =~ tr/ACGT/TGCA/;
+	  $Q1 = reverse $Qual1;
+	}
+	my $R2 = $Read2;
+	my $Q2 = $Qual2;
+	if ($Rev2 != $rev2) {
+	  $R2 = reverse $Read2;
+	  $R2 =~ tr/ACGT/TGCA/;
+	  $Q2 = reverse $Qual2;
+	}
+	printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head1, $flag1, $chrSAM, $tag1pos, $Len1, $tag1pos + $delta, $ilen, $R1, $Q1;
+	printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head2, $flag2, $chrSAM, $tag1pos + $delta, $Len2, $tag1pos, - $ilen, $R2, $Q2;
+      }
+    }
+  } elsif ($_ eq "flagUnmapped flagMismatch") {
+    my ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
+    my $MM0 = <FD>; #READ1 17 N END ; READ2 0 N 1 N 2 N 3 N 4 N 5 N 26 N 27 N 28 N 29 N 30 N 31 N 32 N 33 N 34 N END
+    if (defined($debug) or not defined($T[$ord])) {
+      printf "%s\t%d\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head1, $flag1, $Read1, $Qual1;
+      printf "%s\t%d\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head2, $flag2, $Read2, $Qual2;
+    }
+  } else {
+    die "??? $_";
+  }
+  if (defined $T[$ord]) {
+    my $A = $T[$ord];
+#00000000032:HC23TBGX5:1:11101:21215:1072	99	23	57421005	254	11M52D46M1D19M	=	57421333	252	TCGCCCTCTCTTTGGCCTCGTCGTATGCCACATCACCCACAACTTTTCTCCCATTTGGTTTTTTATCATCTGGGAC	AAAAAEEEEEEEEEEEEEEEEEEEEEEEEAEEEE/EAEEEEEEEEEEEEEEEEEEEEEEAEEEEEEEEEEEEEEEE
+#00000000032:HC23TBGX5:1:11101:21215:1072	147	23	57421333	254	75M	=	57421005	-252	GCGCCCAACCACCACAGCATGCCTTCCGGCAATCGGCACCCCTGTCTCTTTGATGAGTTCCAAGCATCCCTTAGG	EAEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEAEEEEEEEEEEEEEEEEAAAAA
+#XX UID micmap.mismatch.tag1 micmap.mismatch.tag2 transcript.name transcript.num orientation tag1pos tag2pos fraglen mismatch.tag1 mismatch.tag2 mappingPossibilities alignment
+#XXMAP	         186	  12	   0	RPL3;ENSG00000100316.16	40546,10	1	1007	1077	171	   0	   0	20	GGAGGCTGTGACCATTGTAGAGACACCACCCATGGTGGTTGTGGGCATTGTGGGCTACGTGGAAACCCCTCGAGGCCTCCGGACCTTCAAGACTGTCTTTGCTGAGCACATCAGTGATGAATGCAAGAGGCGTTTCTATAAGAATTGGCATAAATCTAAGAAGAAGGCCTT
+#XXMAP	         186	  12	   0	RPL3;ENSG00000100316.16	40546,12	1	1246	1316	171	   0	   0	20	GGAGGCTGTGACCATTGTAGAGACACCACCCATGGTGGTTGTGGGCATTGTGGGCTACGTGGAAACCCCTCGAGGCCTCCGGACCTTCAAGACTGTCTTTGCTGAGCACATCAGTGATGAATGCAAGAGGCGTTTCTATAAGAATTGGCATAAATCTAAGAAGAAGGCCTT
+#XXMAP	         186	  12	   0	RPL3;ENSG00000100316.16	40546,15	1	1007	1077	171	   0	   0	20	GGAGGCTGTGACCATTGTAGAGACACCACCCATGGTGGTTGTGGGCATTGTGGGCTACGTGGAAACCCCTCGAGGCCTCCGGACCTTCAAGACTGTCTTTGCTGAGCACATCAGTGATGAATGCAAGAGGCGTTTCTATAAGAATTGGCATAAATCTAAGAAGAAGGCCTT
+#XXMAP	         186	  12	   0	RPL3;ENSG00000100316.16	40546,18	1	981	1051	171	   0	   0	20	GGAGGCTGTGACCATTGTAGAGACACCACCCATGGTGGTTGTGGGCATTGTGGGCTACGTGGAAACCCCTCGAGGCCTCCGGACCTTCAAGACTGTCTTTGCTGAGCACATCAGTGATGAATGCAAGAGGCGTTTCTATAAGAATTGGCATAAATCTAAGAAGAAGGCCTT
+    my @F = split /\t/, $$A[2];
+    my @E = split /,/, $$A[5];
+    my $r1posG;
+    my $r2posG;
+    my $cig1;
+    my $cig2;
+    my $flag1 = 0x43;
+    my $flag2 = 0x83;
+    my $ilen;
+    if ($F[6] == 0) {
+      my $r1posR = $F[7];
+      my $r2posR = $F[8];
+      if ($$A[4] eq "+") {
+	($r1posG, $cig1) = &rtogP($r1posR, $Len1, \@E);
+	($r2posG, $cig2) = &rtogP($r2posR, $Len2, \@E);
+	$flag1 |= 0x20;
+	$flag2 |= 0x10;
+	$ilen = $r2posG + $Len2 - $r1posG - 1;
+      } else {
+	($r1posG, $cig1) = &rtogM($r1posR, $Len1, \@E);
+	($r2posG, $cig2) = &rtogM($r2posR, $Len2, \@E);
+	$flag1 |= 0x10;
+	$flag2 |= 0x20;
+	$ilen = - ($r1posG + $Len1 - $r2posG - 1);
+      }
+    } else {
+      my $r1posR = $F[8];
+      my $r2posR = $F[7];
+      if ($$A[4] eq "+") {
+	($r1posG, $cig1) = &rtogP($r1posR, $Len1, \@E);
+	($r2posG, $cig2) = &rtogP($r2posR, $Len2, \@E);
+	$flag1 |= 0x10;
+	$flag2 |= 0x20;
+	$ilen = - ($r1posG + $Len1 - $r2posG - 1);
+      } else {
+	($r1posG, $cig1) = &rtogM($r1posR, $Len1, \@E);
+	($r2posG, $cig2) = &rtogM($r2posR, $Len2, \@E);
+	$flag1 |= 0x20;
+	$flag2 |= 0x10;
+	$ilen = $r2posG + $Len2 - $r1posG - 1;
+      }
+    }
+    print join(" ", $ord, @$A[2..4]), "\n" if defined $debug;
+    my $chrSAM = $$A[3];
+    # check whether we need to revcomp the reads
+    if (($Rev1 == 0 and ($flag1 & 0x10) != 0) or ($Rev1 != 0 and ($flag1 & 0x10) == 0)) {
+      $Read1 = reverse $Read1;
+      $Read1 =~ tr/ACGT/TGCA/;
+      $Qual1 = reverse $Qual1;
+    }
+    if (($Rev2 == 0 and ($flag2 & 0x10) != 0) or ($Rev2 != 0 and ($flag2 & 0x10) == 0)) {
+      $Read2 = reverse $Read2;
+      $Read2 =~ tr/ACGT/TGCA/;
+      $Qual2 = reverse $Qual2;
+    }
+    printf "%s\t%d\t%s\t%u\t254\t%s\t=\t%u\t%d\t%s\t%s\n", $Head1, $flag1, $chrSAM, $r1posG, $cig1, $r2posG, $ilen, $Read1, $Qual1;
+    printf "%s\t%d\t%s\t%u\t254\t%s\t=\t%u\t%d\t%s\t%s\n", $Head2, $flag2, $chrSAM, $r2posG, $cig2, $r1posG, - $ilen, $Read2, $Qual2;
+  }
+}
+close FD;
+exit 0;
+
+sub readSAMflags {
+  my $SAM = <FD>; #flag1 25 flag2 37 ilen 0
+  $SAM =~ /^\d+ SAM\d+ flag1 (\d+) flag2 (\d+) ilen (-?\d+) chr (\d+)/;
+  return ($1, $2, $3, $C[$4], $L[$4]);
+}
+
+sub readPCP {
+  my $PCP = <FD>; #908 PCP0 tag1pos 65988635 tag2pos 0 chr 800B0000 chr1 11 rev1 1 chr2 0 rev2 0
+  $PCP =~ /^\d+ PCP\d+ tag1pos (\d+) tag2pos (\d+) chr ([[:xdigit:]]+) chr1 (\d+) rev1 (\d+) chr2 (\d+) rev2 (\d+)/;
+  return ($1, $2, $3, $4, $5, $6, $7);
+}
+
+sub readPP {
+  my $PP = <FD>; #tag1pos 105407463 tag2offset 40000167 delta 359 rev1 0 rev2 1 chr2 0
+  $PP =~ /^\d+ PP\d+ tag1pos (\d+) tag2offset ([[:xdigit:]]+) delta (-?\d+) rev1 (\d+) rev2 (\d+) chr2 (\d+)/;
+  return ($1, $2, $3, $4, $5, $6);
+}
+
+#7440625610 CIG0 READ1 73M 39D 28M END ; READ2 END
+sub readCigar {
+  my $CIG = <FD>; #READ1 END ; READ2 56M 110D 20M END
+  my ($c1, $c2) = $CIG =~ /^\d+ CIG\d+ READ1 ([^;]*)END ; READ2 (.*)END/;
+  my $l1 = 0;
+  my @F = split / /, $c1;
+  foreach my $e (@F) {
+    my $v = $e;
+    my $c = chop $v;
+    $l1 += $v if $c =~ /^[DMNS]$/;
+  }
+  $c1 = join "", @F;
+  my $l2 = 0;
+  @F = split / /, $c2;
+  foreach my $e (@F) {
+    my $v = $e;
+    my $c = chop $v;
+    $l2 += $v if $c =~ /^[DMNS]$/;
+  }
+  $c2 = join "", @F;
+  return ($c1, $c2, $l1, $l2);
+}
+
+sub rtogP {
+  my ($rposR, $Len, $E) = @_;
+  my $rposG;
+  my $cig;
+  my $cur = 0;
+  $rposR += 1; # 0-based
+  for my $i (0 .. $#$E) {
+    my ($p1, $p2) = $$E[$i] =~ /^(\d+)\.\.(\d+)$/;
+    my $l = $p2 - $p1 + 1;
+    if ($rposR > $cur + $l) {
+      $cur += $l;
+      next;
+    }
+    # we hit the start
+    $rposG = $p1 - $cur + $rposR - 1;
+    my $r = $Len;
+    my $ec = $p2 - $rposG + 1;
+    if ($ec >= $r or $i == $#$E) {
+      $cig = sprintf "%uM", $r;
+      $ec = $r if $i == $#$E; # last exon anyways...
+    } else {
+      $cig = sprintf "%uM", $ec;
+    }
+    while ($ec < $r) {
+      $r -= $ec;
+      $i += 1;
+      die "grmp $r $i $#$E $rposR $Len $cig $p1 $p2" if $i > $#$E;
+      my ($np1, $np2) = $$E[$i] =~ /^(\d+)\.\.(\d+)$/;
+      $ec = $np2 - $np1 + 1;
+      die "Bug $np1 - $p2 - 1" if $np1 - $p2 - 1 < 0;
+      $cig .= sprintf "%uN", $np1 - $p2 - 1;
+      if ($ec >= $r or $i == $#$E) {
+	$cig .= sprintf "%uM", $r;
+	$ec = $r if $i == $#$E; # last exon anyways...
+      } else {
+	$cig .= sprintf "%uM", $ec;
+      }
+      $p1 = $np1;
+      $p2 = $np2;
+    }
+    last;
+  }
+  return ($rposG, $cig);
+}
+
+sub rtogM {
+  my ($rposR, $Len, $E) = @_;
+  my $rposG;
+  my $cig;
+  my $cur = 0;
+  $rposR += 1; # 0-based
+  for my $i (0 .. $#$E) {
+    my ($p1, $p2) = $$E[$#$E - $i] =~ /^(\d+)\.\.(\d+)$/;
+    my $l = $p2 - $p1 + 1;
+    if ($rposR > $cur + $l) {
+      $cur += $l;
+      next;
+    }
+    # we hit the start
+    $rposG = $p2 + $cur - $rposR + 1;
+    my $r = $Len;
+    my $ec = $rposG - $p1 + 1;
+    if ($ec >= $r or $i == $#$E) {
+      $ec = $r if $i == $#$E; # last exon anyways...
+      $cig = sprintf "%uM", $r;
+      $rposG = $rposG - $r + 1;
+    } else {
+      $cig = sprintf "%uM", $ec;
+    }
+    while ($ec < $r) {
+      $r -= $ec;
+      $i += 1;
+      my ($np1, $np2) = $$E[$#$E - $i] =~ /^(\d+)\.\.(\d+)$/;
+      $ec = $np2 - $np1 + 1;
+      die "Bug $p1 - $np2 - 1 : $i $#$E $ec $r $cig" if $p1 - $np2 - 1 < 0;
+      $cig = sprintf("%uN", $p1 - $np2 - 1) . $cig;
+      if ($ec >= $r or $i == $#$E) {
+	$cig = sprintf("%uM", $r) . $cig;
+	$rposG = $np2 - $r + 1;
+	$ec = $r if $i == $#$E; # last exon anyways...
+      } else {
+	$cig = sprintf("%uM", $ec) . $cig;
+      }
+      $p1 = $np1;
+      $p2 = $np2;
+    }
+    last;
+  }
+  return ($rposG, $cig);
+}
+__END__
+-rw-r--r--. 1 chris bix 21015311590 Dec  5 12:13 IMMU-NSCLC-0075_b38_all_raw.txt.gz
+000 Ordinal 0 flagPairedReads VariableLen flagUnmapped flagMismatch nbMatches 1 headerChr 00010000
+001 Head1 39 @A00275:262:HLKLHDSXX:1:1101:28474:1110 (38 A00275:262:HLKLHDSXX:1:1101:28474:1110)
+002 Read1 101 ACGGGGTCTCGCTATGTTGCTCAGGCTGGAGTGCAGTGGCTATTCACAGGCGCGATCCCACTCCTGATCAGCACGGGAGTTTTGACCTGCTCCGTTTCCGA
+003 Qual1 101 FFFFFFFFFFFFFFFFF:FFFFFFFFFFFFFFFF,FFFFFFFFFFFFFFFFFFFFFFFFFFF,FFFFFF:FF,FFFF:FFFFFFFFFFFF:FFFFFFFFFF
+004 Head2 39 @A00275:262:HLKLHDSXX:1:1101:28474:1110 (38 A00275:262:HLKLHDSXX:1:1101:28474:1110)
+005 Read2 101 CCCCGCTCCTCGGGAGGCTGAGGTGGGAGGATCGCTTGAGCCCAGGAGTTCTGGGCTGTAGTGCGCTATGCCGATCGGGTGTCCGCACTAAGTTCGGCATC
+006 Qual2 101 FFF,FFF,FFFFFFFFF:,FFFFFFF:F:FFFF:FFFFFFFFFFFFFFF:FFFFFF,FFFFFFF:FFFFFFFF:FFFFFFF:FFF:FFF:FFFFF::FFFF
+007 SAM0 flag1 77 flag2 141 ilen 0 chr 0
+008 MM0 READ1 END ; READ2 END
+
+- try to fix 0 pos
+
+1165200 Ordinal 11652 flagPairedReads VariableLen flagPairPos flagMismatch flagCigar nbMatches 1 headerChr 00000019
+1165201 Head1 39 @A00275:262:HLKLHDSXX:1:1101:30897:6746 (38 A00275:262:HLKLHDSXX:1:1101:30897:6746)
+1165202 Read1 101 GCATTGCGAGACGCTGGAGCCGGAGCACCCTATGTCGCAGTATCTGTCTTTGATTCCTGCCTCATCCTATTATTTATCGCACCTACGTTCAATATTACAGG
+1165203 Qual1 101 FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:FFFFFF:FFFFFFFFFF:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+1165204 Head2 39 @A00275:262:HLKLHDSXX:1:1101:30897:6746 (38 A00275:262:HLKLHDSXX:1:1101:30897:6746)
+1165205 Read2 101 CACGATGGATCACAGGTCTATCACCCTATTAACCACTCACGGGAGCTCTCCATGCATTTGGTATTTTCGTCTGGGGGGTATGCACGCGATAGCATTGCGAG
+1165206 Qual2 101 FFFFFFFFFFFFFFFFFFF:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+1165207 SAM0 flag1 83 flag2 163 ilen -185 chr 25
+1165208 PP0 tag1pos 85 tag2offset A0000055 delta -85 rev1 1 rev2 0 chr2 0
+1165209 MM0 READ1 END ; READ2 0 C 1 A 2 C 3 G 4 A 5 T 6 G END
+1165210 CIG0 READ1 END ; READ2 6I 95M END
+
+818211800 Ordinal 8182118 flagPairedReads VariableLen flagPairPos flagMismatch nbMatches 1 headerChr 00000019
+818211801 Head1 38 @A00275:262:HLKLHDSXX:1:1232:2763:4679 (37 A00275:262:HLKLHDSXX:1:1232:2763:4679)
+818211802 Read1 101 GGTCTATCACCCTATTAACCACTCACGGGAGCTCTCCATGCATTTGGTATTTTCGTCTGGGGGGTATGCACGCGATAGCATTGCGAGACGCTGGAGCCGGA
+818211803 Qual1 101 :FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+818211804 Head2 38 @A00275:262:HLKLHDSXX:1:1232:2763:4679 (37 A00275:262:HLKLHDSXX:1:1232:2763:4679)
+818211805 Read2 101 GGATCACAGGTCTATCACCCTATTAACCACTCACGGGAGCTCTCCATGCATTTGGTATTTTCGTCTGGGGGGTATGCACGCGATAGCATTGCGAGACGCTG
+818211806 Qual2 101 FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,FFFFFFFFFFFF::FFFFFFFFFFFFFFFFFFFFFFFFF:FFFFFFFFF
+818211807 SAM0 flag1 83 flag2 163 ilen -108 chr 25
+818211808 PP0 tag1pos 8 tag2offset A0000008 delta -8 rev1 1 rev2 0 chr2 0
+818211809 MM0 READ1 END ; READ2 0 G END
+
+7185373500 Ordinal 71853735 flagPairedReads VariableLen flagHalfmap flagPairChrPos flagMismatch nbMatches 1 headerChr 00190032
+7185373501 Head1 39 @A00275:262:HLKLHDSXX:2:1143:4363:28933 (38 A00275:262:HLKLHDSXX:2:1143:4363:28933)
+7185373502 Read1 101 GGATCACAGGTCTATCACCCTATTAACCACTCACGGGAGCTCTCCATGCATTTGGTATTTTCGTCTGGGGGGTATGCACGCGATAGCATTGCGAGACGCTG
+7185373503 Qual1 101 FFFFF:FF:FFFF:FFFFFFFFFF:FFF:FFFFFFFFFFFFF:FF:,FFFFFFFFFFFFFFFF:FF:FFFFFFF:FFFFFFFFFF:FFFFFFFFFFFF,FF
+7185373504 Head2 39 @A00275:262:HLKLHDSXX:2:1143:4363:28933 (38 A00275:262:HLKLHDSXX:2:1143:4363:28933)
+7185373505 Read2 101 TAAAGCCTAAATAGCCCACACGTTCCCCTTAAATAAGACATCACGATGGATCACAGGTCTATCACCCTATTAACCACTCACGGGAGCTCTCCATGCATTTG
+7185373506 Qual2 101 FFFF::F:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:F:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+7185373507 SAM0 flag1 89 flag2 165 ilen 0 chr 0
+7185373508 PCP0 tag1pos 0 tag2pos 0 chr 80190000 chr1 25 rev1 1 chr2 0 rev2 0
+7185373509 MM0 READ1 0 G END ; READ2 END
+
+- fix wrong output
+
+5961349500 Ordinal 59613495 flagPairedReads VariableLen flagPairPos flagMismatch flagCigar nbMatches 2 headerChr 00000016
+5961349501 Head1 40 @A00275:262:HLKLHDSXX:1:2529:28546:33144 (39 A00275:262:HLKLHDSXX:1:2529:28546:33144)
+5961349502 Read1 101 GCCACCTTTCACCGTGAGGATGCCTGCCACCTTCAGGATCACATCTTTGGGTGAGGACCAACCGGAGAGAGAGCCCGTCAGCTTCACGCCAATCACCTTGG
+5961349503 Qual1 101 FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+5961349504 Head2 40 @A00275:262:HLKLHDSXX:1:2529:28546:33144 (39 A00275:262:HLKLHDSXX:1:2529:28546:33144)
+5961349505 Read2 101 CCGTGAGGATGCCTGCCACCTTCAGGATCACATCTTTGGGTGAGGACCAACCGGAGAGAGAGCCCGTCAGCTTCACGCCAATCACCTTGGGGCACTTCAGC
+5961349506 Qual2 101 FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+5961349507 SAM0 flag1 99 flag2 147 ilen 111 chr 22
+5961349508 PP0 tag1pos 34590504 tag2offset 4000000B delta 11 rev1 0 rev2 1 chr2 0
+5961349509 MM0 READ1 11 C 12 C 56 A 63 G 69 A 76 G END ; READ2 0 C 1 C 45 A 52 G 58 A 65 G END
+5961349510 CIG0 READ1 END ; READ2 END
+5961349511 SAM1 flag1 339 flag2 419 ilen -119 chr 22
+5961349512 PP1 tag1pos 41515762 tag2offset A0000013 delta -19 rev1 1 rev2 0 chr2 0
+5961349513 MM1 READ1 0 C 2 A END ; READ2 2 T 4 A 5 A 6 G 7 T 13 A END
+5961349514 CIG1 READ1 END ; READ2 12M 8D 89M END
+
+00059613495:LKLHDSXX:1:2529:28546:33144 99      chr22   34590504        254     101M    =       34590515        111     GCCACCTTTCACCGTGAGGATGCCTGCCACCTTCAGGATCACATCTTTGGGTGAGGACCAACCGGAGAGAGAGCCCGTCAGCTTCACGCCAATCACCTTGG   FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+00059613495:LKLHDSXX:1:2529:28546:33144 147     chr22   34590515        254     101M    =       34590504        -111    CCGTGAGGATGCCTGCCACCTTCAGGATCACATCTTTGGGTGAGGACCAACCGGAGAGAGAGCCCGTCAGCTTCACGCCAATCACCTTGGGGCACTTCAGC   FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+00059613495:LKLHDSXX:1:2529:28546:33144 419     chr22   41515743        254     12M8D89M        =       41515762        119     CCGTGAGGATGCCTGCCACCTTCAGGATCACATCTTTGGGTGAGGACCAACCGGAGAGAGAGCCCGTCAGCTTCACGCCAATCACCTTGGGGCACTTCAGC   FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+00059613495:LKLHDSXX:1:2529:28546:33144 339     chr22   41515762        254     101M    =       41515743        -119    GCCACCTTTCACCGTGAGGATGCCTGCCACCTTCAGGATCACATCTTTGGGTGAGGACCAACCGGAGAGAGAGCCCGTCAGCTTCACGCCAATCACCTTGG   FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+
+-rw-r--r--. 1 chris bix 64337368 Dec  4 15:41 tst_MAP.txt.gz
+XX UID micmap.mismatch.tag1 micmap.mismatch.tag2 transcript.name transcript.num orientation tag1pos tag2pos fraglen mismatch.tag1 mismatch.tag2 mappingPossibilities alignment
+XXMAP	         186	  12	   0	RPL3;ENSG00000100316.16	40546,10	1	1007	1077	171	   0	   0	20	GGAGGCTGTGACCATTGTAGAGACACCACCCATGGTGGTTGTGGGCATTGTGGGCTACGTGGAAACCCCTCGAGGCCTCCGGACCTTCAAGACTGTCTTTGCTGAGCACATCAGTGATGAATGCAAGAGGCGTTTCTATAAGAATTGGCATAAATCTAAGAAGAAGGCCTT
+XXMAP	         186	  12	   0	RPL3;ENSG00000100316.16	40546,12	1	1246	1316	171	   0	   0	20	GGAGGCTGTGACCATTGTAGAGACACCACCCATGGTGGTTGTGGGCATTGTGGGCTACGTGGAAACCCCTCGAGGCCTCCGGACCTTCAAGACTGTCTTTGCTGAGCACATCAGTGATGAATGCAAGAGGCGTTTCTATAAGAATTGGCATAAATCTAAGAAGAAGGCCTT
+XXMAP	         186	  12	   0	RPL3;ENSG00000100316.16	40546,15	1	1007	1077	171	   0	   0	20	GGAGGCTGTGACCATTGTAGAGACACCACCCATGGTGGTTGTGGGCATTGTGGGCTACGTGGAAACCCCTCGAGGCCTCCGGACCTTCAAGACTGTCTTTGCTGAGCACATCAGTGATGAATGCAAGAGGCGTTTCTATAAGAATTGGCATAAATCTAAGAAGAAGGCCTT
+XXMAP	         186	  12	   0	RPL3;ENSG00000100316.16	40546,18	1	981	1051	171	   0	   0	20	GGAGGCTGTGACCATTGTAGAGACACCACCCATGGTGGTTGTGGGCATTGTGGGCTACGTGGAAACCCCTCGAGGCCTCCGGACCTTCAAGACTGTCTTTGCTGAGCACATCAGTGATGAATGCAAGAGGCGTTTCTATAAGAATTGGCATAAATCTAAGAAGAAGGCCTT
+
+==> /data6/b38/mm_RNAseq_clean_b38.txt
+1	1	unknown	12MelaCE5B3CD	tromer	NC_000001_1956_0	chr1	+	100249098..100249310	100249098	100249310	213	AGAAGAGGCAGGAAGAAGA
+2	1	unknown	1D12A	tromer	NC_000008_541_0	chr8	+	30417402..30417904	30417402	30417904	503	GAGATGTCTCAGAAAACCTGTT
+3	1	unknown	22k48	tromer	NC_000022_144_0	chr22	+	19415432..19415818,19417258..19420342,19421691..19421845	19415432	19421845	3627	TCAAAGACACAAATAAATGA
+4	1	unknown	6H9A	tromer	NC_000015_786_0	chr15	+	59147606..59148248	59147606	59148248	643	AAAAAAAAAACAATACAAAAAAAAGAAAGGAAGAGACTGTGGAAC
+5	1	unknown	6M1-15	tromer	NC_000006_549_0	chr6	-	29045176..29045240	29045176	29045240	65	CCTTGTATCATCATCTACCTCCTCCTCCTCCTTTTCTCACTCTAGGATTTAGACATTGAAGGACT
+6	1	unknown	6M1-16	tromer	NC_000006_564_0	chr6	+	29460597..29460652	29460597	29460652	56	AAACATGAAGAAGTGAAGAGGCATTATATATACAACTCACTGTTCAGTAGCTCAGG
+7	1	unknown	6M1-21	tromer	NC_000006_563_0	chr6	-	29455141..29455234	29455141	29455234	94	TCTGTGGTTTGATGTTTCAATTTGAATGGCGTCTTCAAAGGAGAAGAAGCTTTTAAGTTTGATTAACTCAAAATTCATCAATTATCTTTTTGCA
+8	1	unknown	6M1-27	tromer	NC_000006_562_0	chr6	-	29449957..29450098	29449957	29450098	142	AAACTGTGCTGCCACAGGCCCATTTTTCGGTGAGAAAGCTAGAAAAGTTGG
+9	4	ENSG00000121410.11	A1BG	protein_coding	ENST00000598345.1	chr19	-	58346860..58347029,58347353..58347657	58345178	58347657	475	CCGCCCGCTCCGCCCAGGACCCC
+10	1	ENSG00000268895.6	A1BG-AS1	lncRNA	ENST00000670199.1	chr19	+	58351990..58353474,58353714..58353857,58354369..58355151	58347718	58354724	2412	TTCGTCATGTTGGGTAGAC
+10	2	ENSG00000268895.6	A1BG-AS1	lncRNA	ENST00000595302.1	chr19	+	58351970..58353044,58353379..58353474,58353714..58353857,58354369..58355183	58347718	58354724	2130	ATTTTTAG
+10	3	ENSG00000268895.6	A1BG-AS1	lncRNA	ENST00000670460.1	chr19	+	58347718..58347844,58353714..58355455	58347718	58354724	1869	GGCCGCGCCCGCGCCT
+
+devcpt01_chris: /data6/tools/bin/GTLdecompress -g /data6/b37/b37.bin -r <(cat S1660-1_b37/C_d1.gtl) -p -n -m -a -h -c -u -o SAM|head -4
+NB551125:47:HC23TBGX5:2:23109:19286:6920	65	1	233971880	250	76M	=	272043	0	CTCAAAGTCAGAGTCATTCC	AAAAAEEAEEEEEEEEEAEE
+NB551125:47:HC23TBGX5:2:23109:19286:6920	129	2	272043	254	76M	=	233971880	0	GTAGACAGCGCGGCAACTTC	AAAAAEEEEEEEEEE6EEEE
+NB551125:47:HC23TBGX5:4:13510:17036:11109	65	1	233971880	250	76M	=	272046	0	CTCAAAGTCAGAGTCATTCC	AAAAAAA/EAEEA/AEEEEA
+NB551125:47:HC23TBGX5:4:13510:17036:11109	129	2	272046	254	76M	=	233971880	0	GACAGCGCGGCAACTTCCGG	AAAA6EEEEEA/EEEEEEEE
+
+/data6/tools/bin/GTLdecompress -g /data6/b37/b37.bin -r <(cat S1660-1_b37/chr19a_g.gtl) -p -n -m -a -h -c -u -o SAM|head -4
+NB551125:47:HC23TBGX5:4:13606:14549:10371	99	19	199748	240	75M	=	200303	480	CTCGGGCTGACCTCTCTCAG	AAAAAEEEEEEEEEEEEEEE
+NB551125:47:HC23TBGX5:4:13606:14549:10371	147	19	200303	227	11M12D65M	=	199748	-480	GGGGGTGTGGCTAGGTCTCTC	6//<//////E/E///6EA/A
+NB551125:47:HC23TBGX5:3:23505:12128:11241	99	19	201420	254	75M	=	201764	269	GAGGTCGACTTGAGAAAGTT	AAAAAEEEEEEEEEEEEEEE
+NB551125:47:HC23TBGX5:3:23505:12128:11241	147	19	201764	217	49M99D13M1I6M2I5M	=	201420	-269	AGAATTAGTGGGCGTGTCAAC	EEEEEEEEEEEEEEEEAEEEA
+
+/data6/tools/bin/GTLdecompress -g /data6/b37/b37.bin -r <(cat S1660-1_b37/HM_chr14.gtl) -p -n -m -a -h -c -u -o SAM|head -4
+NB551125:47:HC23TBGX5:1:12109:1048:11335	89	14	19022409	254	76M	=	0	0	AGCTCTCCAAATGTGCACGT	EEEEEEEEEEEEEEEEEEEE
+NB551125:47:HC23TBGX5:1:12109:1048:11335	165	unknown	0	254	*	=	19022409	0	CCTTTTCCACCNNAGGCCTC	AAAAAEEEEEE##EEEEEEE
+NB551125:47:HC23TBGX5:1:12309:20174:10486	69	unknown	0	254	*	=	19114748	0	GTAAAAGTGGTGTGTGGCCA	AAAAAEEEEEEEEEEEEEEE
+NB551125:47:HC23TBGX5:1:12309:20174:10486	137	14	19114748	254	76M	=	0	0	CAAATATTCTCATAGATTCT	AAAAAEEEEEEEEEEAEEEE
+
+/data6/tools/bin/GTLdecompress -g /data6/b37/b37.bin -r <(cat S1660-1_b37/M_chr20a_g.gtl) -p -n -m -a -h -c -u -o SAM|head -4
+NB551125:47:HC23TBGX5:4:13403:5786:2184	83	20	1896002	243	50M3D26M	=	1895895	-31	CCAGCAGATGCCGGCACCTA	/AAEEEEAEEE<EEEEEEEE
+NB551125:47:HC23TBGX5:4:13403:5786:2184	163	20	1895895	237	76M	=	1896002	31	AATTAATCTACAATCAAAAA	AAAAAEEEEEEEEEEEEEEE
+NB551125:47:HC23TBGX5:4:13403:5786:2184	339	22	30938895	243	76M	=	30938788	-31	CCAGCAGATGCCGGCACCTA	/AAEEEEAEEE<EEEEEEEE
+NB551125:47:HC23TBGX5:4:13403:5786:2184	419	22	30938788	237	76M	=	30938895	31	AATTAATCTACAATCAAAAA	AAAAAEEEEEEEEEEEEEEE
+
+/data6/tools/bin/GTLdecompress -g /data6/b37/b37.bin -r <(cat S1660-1_b37/M_chr20a_g.gtl) -p -n -m -a -h -c -u -o SAM|head -4
+NB551125:47:HC23TBGX5:3:11601:18583:12288	77	unknown	0	255	*	=	0	0	AAAAAAAAAAAAAAAAAAAA	6AAAA66E6EEEEEEEE66E
+NB551125:47:HC23TBGX5:3:11601:18583:12288	141	unknown	0	255	*	=	0	0	AAAAAGAAGCCATCCACAGT	///A/E6/A//E/AAE/<A/
+NB551125:47:HC23TBGX5:1:23212:2332:9185	77	unknown	0	255	*	=	0	0	AAAAAAAAAAAAAAAAAAAA	AAAAAEEEEEEEEEEEEEEE
+NB551125:47:HC23TBGX5:1:23212:2332:9185	141	unknown	0	255	*	=	0	0	AAAAATTTTTTTTTTTTTTTT	///66/E6AE//6////////
+
+00000000032:HC23TBGX5:1:11101:21215:1072	99	23	57421005	254	11M52D46M1D19M	=	57421333	252	TCGCCCTCTCTTTGGCCTCGTCGTATGCCACATCACCCACAACTTTTCTCCCATTTGGTTTTTTATCATCTGGGAC	AAAAAEEEEEEEEEEEEEEEEEEEEEEEEAEEEE/EAEEEEEEEEEEEEEEEEEEEEEEAEEEEEEEEEEEEEEEE
+00000000032:HC23TBGX5:1:11101:21215:1072	147	23	57421333	254	75M	=	57421005	-252	GCGCCCAACCACCACAGCATGCCTTCCGGCAATCGGCACCCCTGTCTCTTTGATGAGTTCCAAGCATCCCTTAGG	EAEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEAEEEEEEEEEEEEEEEEAAAAA
+
+pccig4007_chris: samtools view IMMU-NSCLC-0075_b38.bam chr22|grep 00116616299:LKLHDSXX:2:2313:26910:1157
+00116616299:LKLHDSXX:2:2313:26910:1157  147     chr22   18527959        254     101M    =       18529221        1162    TCCGGCCGGCGTGAGAAGGGGCATGTGTCGGGCTACCCTCGGGCTTCCCCTGCCGCCCATTGTGATCCAGCCCGCTAGGCGCTCCCTGCCGCCCATTGTGA   FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF:FFFFF
+00116616299:LKLHDSXX:2:2313:26910:1157  99      chr22   18529221        254     8M268435455N93M =       18527959        -1162   CGCCTGCATTTGGTATTAGTATTTCATTAACCTTTCATTGATCTAATTACGGCTCTTTGACACAATTTTCATCAGTGATGGACTAAGTGTGATCCGGCCTG   FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF
+
+pccig4007_chris: zgrep 116616299 tst_MAP.txt.gz 
+XXMAP      116616299       1       0    NC_000022_123;NC_000022_123     33286,1 1       1169    1277    209        1      10    1       TCACAATGGGCGGCAGGGAGCGCCTAGCGGGCTGGATCACAATGGGCGGCAGGGGAAGCCCGAGGGTAGCCCGACACATGCCCCTTCTCACGCCGGCCGGA.......CAGGCCGGATCACACTTAGTCCATCACTGATGAAAATTGTGTCAAAGAGCCGTAATTAGATCAATGAAAGGT
+
+pccig4007_chris: grep -w 33286 /data6/b38/mm_RNAseq_clean_b38.txt 
+33286   1       unknown NC_000022_123   tromer  NC_000022_123_0 chr22   -       18527859..18529228      18527859        18529228        1370    GATTGTGCTCCGCCCACATCCCCCGCCCCGCCCACGCCTT

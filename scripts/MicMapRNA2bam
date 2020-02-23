@@ -1,0 +1,212 @@
+#!/bin/bash
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2020 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+
+# Reference assembly
+R=b38
+
+# Tables repository
+HT=/var/lib/hugetlbfs/global/pagesize-1GB
+
+# GTL binaries
+export GTLBINDIR=/usr/local/bin
+
+destdir=/tmp
+tempdir=/tmp
+tables=/data6
+M=24
+stranded=
+
+function usage ()
+{
+  echo "Usage: $0 [options] <file_R1.fq.gz> <file_R2.fq.gz> <name>" >&2
+  echo "" >&2
+  echo "This script calls MicMap tools to map RNAseq reads from the given pair of FASTQ files" >&2
+  echo "and produces an output BAM file <name>_<ref>.bam in the destination directory" >&2
+  echo "" >&2
+  echo "options (default values are given in square brackets):" >&2
+  echo " -d <dir>    output directory, where the new BAM file named <name>_<ref>.bam will be created [$destdir]" >&2
+  echo " -R <dir>    reference tables directory, where subdirectories for each reference is located [$tables]" >&2
+  echo " -r <str>    name of the reference used for mapping [$R - so reference files will be located in $tables/$R]" >&2
+  echo " -t <dir>    Number of threads [$M]">&2
+  echo " -T <dir>    Temporary path [$tempdir]">&2
+  echo " -s          RNAseq is stranded [ default is no]">&2
+  echo " -h          show this usage info and exit">&2
+  echo " -G <name>   read group name in BAM file">&2
+  echo " -L <name>   library name in BAM file">&2
+  echo " -S <name>   sample name in BAM file">&2
+  exit 1
+}
+
+while getopts ":d:hr:t:T:R:sG:L:S:" opt; do
+  case $opt in
+    d)
+      destdir=$OPTARG
+      ;;
+    h)
+      usage
+      ;;
+    r)
+      R=$OPTARG
+      ;;
+    R)
+      tables=$OPTARG
+      ;;
+    t)
+      M=$OPTARG
+      ;;
+    T)
+      tempdir=$OPTARG
+      ;;
+    s)
+      stranded="-S"
+      ;;
+    G)
+      RG=$OPTARG
+      ;;
+    L)
+      LB=$OPTARG
+      ;;
+    S)
+      SM=$OPTARG
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      usage
+      ;;
+    :)
+      echo "Option -$OPTARG requires an argument." >&2
+      usage
+      ;;
+  esac
+done
+
+if (( $# - $OPTIND != 2 )); then
+  usage
+fi
+shift $(($OPTIND - 1))
+f1=$1
+f2=$2
+name=${3}_$R
+if [[ "X$RG" = "X" ]]; then RG=$3; fi
+if [[ "X$SM" = "X" ]]; then SM=$3; fi
+if [[ "X$LB" = "X" ]]; then LB=$3; fi
+
+# Tables
+T=$tables/$R
+
+# directory where GTL files of RNAseq are located
+D=$tempdir/$name
+rm -f $D*.gtl
+
+# destination location
+if [[ ! -d $destdir ]]; then
+  mkdir -p $destdir
+  if [[ ! -d $destdir ]]; then
+    echo >&2
+    echo "Error creating destination directory $destdir" >&2
+    echo >&2
+    exit 1
+  fi
+fi
+
+if [[ -f $destdir/$name.bam ]]; then
+  echo >&2
+  echo "Result BAM file $destdir/$name.bam already exists - will not overwrite" >&2
+  echo >&2
+  exit 2
+fi
+
+for f in $R.bin $R.cfg $R.fa.gz $R.fa.gz.fai $R.fa.gz.gzi header_$R mm_RNAseq_clean_$R.bin mm_RNAseq_clean_$R.txt; do
+  if [[ ! -s $T/$f ]]; then
+    echo >&2
+    echo "Error - file $f should be available in $T" >&2
+    echo >&2
+    exit 1
+  fi
+done
+
+if [[ ! -s $HT/$R.bin ]]; then
+  rm -f $HT/*
+  echo -n "Loading $R.bin in $HT ..."
+  MicMap -g $T/$R.bin -p $T/tbl_18nt/start0. -s $HT
+  if [[ ! -s $HT/$R.bin ]]; then
+    echo
+    echo "Error - $R.bin should be available in $HT"
+    exit 1
+  fi
+  echo "done"
+fi
+
+echo "Start processing sample $SM on `date`"
+
+echo "Running MicMap on paired files $f1 $f2"
+MicMap -g $HT/$R.bin -p $HT/start0. -A $M -G 448 -1 <(gzip -dc $f1 | sed 's/ .*$//') -2 <(gzip -dc $f2 | sed 's/ .*$//') -r $D
+
+echo "Running RNA match for sample $SM"
+virus_match_AVX512 -i $T/mm_RNAseq_clean_$R.bin -1 <(GTLdecompress -g $T/$R.bin -r <(cat $D*.gtl) -m -a -h -c -u -o refless) -L 50 -F 75 -G 600 $stranded -d $destdir -t $M -v0 > $destdir/log
+
+echo "Extracting combined mapping information for sample $SM"
+grep -h ^XXMAP $destdir/cpu*.rslts | sort -k 2,2n -S 35% | pigz -c >$destdir/MAP.txt.gz
+rm $destdir/cpu*.rslts $destdir/log
+GTLdecompress -g $T/$R.bin -r <(cat $D*.gtl) -p -n -m -a -h -c -u -o raw | sort -S 80% -T . -k 1,1n | pigz -c >$destdir/${name}_all_raw.txt.gz
+rm $D*.gtl
+mv ${D}_log.txt $destdir
+pushd $destdir
+echo "Generating $name.raw.bam"
+samtools view -b -@$M <(cat $T/header_${R}; tromer2sam ${name}_all_raw.txt.gz MAP.txt.gz $T/$R.cfg $T/mm_RNAseq_clean_$R.txt) >${name}_raw.bam || exit 1
+rm ${name}_all_raw.txt.gz MAP.txt.gz
+echo "Add ReadGroup info RG:$RG LB:$LB SM:$SM PL:ILLUMINA"
+samtools addreplacerg -r "ID:$RG" -r "LB:$LB" -r "SM:$SM" -r 'PL:ILLUMINA' -o ${name}_rg.bam -@$M ${name}_raw.bam || exit 1
+rm ${name}_raw.bam
+echo "Sort by name"
+samtools sort -n -@$M -m 2g -o ${name}_nsort.bam ${name}_rg.bam || exit 1
+rm ${name}_rg.bam
+echo "Fix mate info"
+samtools fixmate -m -@$M ${name}_nsort.bam ${name}_fix.bam || exit 1
+rm ${name}_nsort.bam
+echo "Sort by position"
+samtools sort -@$M -m 2g -o ${name}_sort.bam ${name}_fix.bam || exit 1
+rm ${name}_fix.bam
+echo "Add NM info"
+samtools calmd -b -@$M ${name}_sort.bam $T/$R.fa.gz >${name}_nm.bam || exit 1
+rm ${name}_sort.bam
+echo "Mark duplicates and index"
+samtools markdup --write-index -@$M ${name}_nm.bam ${name}.bam || exit 1
+rm ${name}_nm.bam
+# make sure the index file is more recent than the bam
+touch ${name}.bam.csi
+#java -Xmx16g -jar $PICARD/picard.jar ValidateSamFile I=${name}.bam || exit 1
+#echo "generating counts for sample $name"
+#PYTHONPATH=$HLIB $HBIN/htseq-count -f bam -r pos -s $stranded -t exon -i gene_id ${name}.bam $gff >${name}_counts.txt 2>${name}_counts.log
+echo "Completed processing sample $name on `date`"
+popd
+exit 0

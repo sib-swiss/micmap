@@ -1,0 +1,257 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2020 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+use Getopt::Long;
+my $sites = "/home/bix/Maria/dm6_MboI_MseI_table.txt";
+my $siteLen = 4;
+my $maxDist = 300;
+my $binSize = 1000;
+my $geneBinSize = 10000;
+my $gPieceSize = 0x4000000;
+my $maxMM = 2; # discard pairs where there is more than 2 mismatches in either read
+GetOptions("sites=s" => \$sites,
+  "binSize=i" => \$binSize,
+  "geneBinSize=i" => \$geneBinSize,
+  "gPieceSize=i" => \$gPieceSize);
+#my %G;
+#my %N;
+local *FD;
+my %S;
+open FD, $sites or die "Can't open $sites : $!";
+while ( <FD> ) {
+  s/\s+$//s;
+  my @F = split /\t/;
+  my $bin = int($F[1] / $binSize);
+  $S{$F[0]} = [] unless defined $S{$F[0]};
+  my $A = $S{$F[0]};
+  $$A[$bin] = {} unless defined $$A[$bin];
+  $$A[$bin]->{$F[1]} = 1;
+}
+close FD;
+while ( <> ) {
+  my @F1 = split /\t/;
+  $_ = <>;
+  my @F2 = split /\t/;
+  next if $F1[5] !~ /^\d+M$/ or $F2[5] !~ /^\d+M$/; # reject indels
+  if (defined $maxMM) {
+    my ($l1) = $F1[5] =~ /^(\d+)M/;
+    die "Bad length $F1[5]" unless defined $l1;
+    my ($l2) = $F2[5] =~ /^(\d+)M/;
+    die "Bad length $F2[5]" unless defined $l2;
+    my $mm1 = (254 - $F1[4]) * $l1 / 254;
+    next if $mm1 > $maxMM;
+    my $mm2 = (254 - $F2[4]) * $l2 / 254;
+    next if $mm2 > $maxMM;
+  }
+  my $cn1 = $F1[2];
+  my $cn2 = $F2[2];
+  $cn1 =~ s/^chr//;
+  $cn2 =~ s/^chr//;
+  $cn1 = 0 if $cn1 eq "2L";
+  $cn1 = 1 if $cn1 eq "2R";
+  $cn1 = 2 if $cn1 eq "3L";
+  $cn1 = 3 if $cn1 eq "3R";
+  $cn1 = 23 if $cn1 eq "X";
+  $cn1 = 24 if $cn1 eq "Y";
+  $cn2 = 0 if $cn2 eq "2L";
+  $cn2 = 1 if $cn2 eq "2R";
+  $cn2 = 2 if $cn2 eq "3L";
+  $cn2 = 3 if $cn2 eq "3R";
+  $cn2 = 23 if $cn2 eq "X";
+  $cn2 = 24 if $cn2 eq "Y";
+  next if $cn1 !~ /^\d+$/ or $cn1 > 24;
+  next if $cn2 !~ /^\d+$/ or $cn2 > 24;
+  # make F1 first
+  if ($cn2 < $cn1 or ($cn1 == $cn2 and $F2[3] < $F1[3])) {
+    my @tem = @F1;
+    @F1 = @F2;
+    @F2 = @tem;
+  }
+  my $readLen1 = length $F1[9];
+  my $readLen2 = length $F2[9];
+  my $rev1 = 0;
+  $rev1 = 1 if ($F1[1] & 0x10) == 0x10;
+  my $rev2 = 0;
+  $rev2 = 1 if ($F2[1] & 0x10) == 0x10;
+  my $keep;
+  $keep = 1 if $F1[2] eq $F2[2] and $rev1 == 0 and $rev2 == 1 and $F2[3] - $F1[3] >= 0 and $F2[3] - $F1[3] < 2048;
+  $keep = 1 if $F1[2] eq $F2[2] and $rev1 == 1 and $rev2 == 0 and $F1[3] - $F2[3] >= 0 and $F1[3] - $F2[3] < 2048;
+  next unless defined $keep;
+  my $bin1 = int($F1[3] / $binSize);
+  my $SA = $S{$F1[2]};
+  my $h = $$SA[$bin1];
+  my %cs;
+  %cs = %$h if defined $h;
+  while ($bin1 > 0) {
+    $bin1 -= 1;
+    next unless defined $$SA[$bin1];
+    $h = $$SA[$bin1];
+    foreach my $k (keys %$h) {
+      $cs{$k} = 1;
+    }
+    last;
+  }
+  $bin1 = int($F1[3] / $binSize);
+  my $bin2 = int(($F1[3] + $readLen1) / $binSize);
+  if ($bin1 != $bin2 and defined($$SA[$bin2])) {
+    $h = $$SA[$bin2];
+    foreach my $k (keys %$h) {
+      $cs{$k} = 1;
+    }
+  }
+  while ($bin2 < $#$SA) {
+    $bin2 += 1;
+    next unless defined $$SA[$bin2];
+    $h = $$SA[$bin2];
+    foreach my $k (keys %$h) {
+      $cs{$k} = 1;
+    }
+    last;
+  }
+  my $site1;
+  if ($rev1 == 0) {
+    foreach my $pos (sort {$a <=> $b} keys %cs) {
+      if ($pos >= $F1[3] + $readLen1 - $siteLen) {
+	$site1 = $pos;
+	last;
+      }
+    }
+  } else {
+    foreach my $pos (sort {$a <=> $b} keys %cs) {
+      if ($pos <= $F1[3]) {
+	# $site1 = $pos;
+	next;
+      }
+      $site1 = $pos; # grab the next... so we always have the segment end with highest genomic coordinate
+      last;
+    }
+  }
+  unless (defined $site1) {
+    print STDERR "Failed to get site1 point\n";
+    print STDERR join(" ",@F1);
+    printf STDERR "%s %u %s %s %s %u %s %s\n", $F1[2], $F1[3], $F1[5], ($rev1 == 1) ? "-" : "+", $F2[2], $F2[3], $F2[5], ($rev2 == 1) ? "-" : "+";
+    print STDERR join(" ",sort {$a <=> $b} keys %cs), "\n";
+    warn "skipped";
+    next;
+  }
+  $bin1 = int($F2[3] / $binSize);
+  $SA = $S{$F2[2]};
+  $h = $$SA[$bin1];
+  undef %cs;
+  %cs = %$h if defined $h;
+  while ($bin1 > 0) {
+    $bin1 -= 1;
+    next unless defined $$SA[$bin1];
+    $h = $$SA[$bin1];
+    foreach my $k (keys %$h) {
+      $cs{$k} = 1;
+    }
+    last;
+  }
+  $bin2 = int($F2[3] / $binSize);
+  $bin2 = int(($F2[3] + $readLen2) / $binSize);
+  if ($bin1 != $bin2 and defined($$SA[$bin2])) {
+    $h = $$SA[$bin2];
+    foreach my $k (keys %$h) {
+      $cs{$k} = 1;
+    }
+  }
+  while ($bin2 < $#$SA) {
+    $bin2 += 1;
+    next unless defined $$SA[$bin2];
+    $h = $$SA[$bin2];
+    foreach my $k (keys %$h) {
+      $cs{$k} = 1;
+    }
+    last;
+  }
+  my $site2;
+  if ($rev2 == 0) {
+    foreach my $pos (sort {$a <=> $b} keys %cs) {
+      if ($pos >= $F2[3] + $readLen2 - $siteLen) {
+	$site2 = $pos;
+	last;
+      }
+    }
+  } else {
+    foreach my $pos (sort {$a <=> $b} keys %cs) {
+      if ($pos <= $F2[3]) {
+	# $site2 = $pos;
+	next;
+      }
+      $site2 = $pos; # grab the next... so we always have the segment end with highest genomic coordinate
+      last;
+    }
+  }
+  unless (defined $site2) {
+    print STDERR "Failed to get site2 point\n";
+    print STDERR join(" ",@F2);
+    printf STDERR "%s %u %s %u %s %s %u %s %s\n", $F1[2], $F1[3], $F1[5], $site1, ($rev1 == 1) ? "-" : "+", $F2[2], $F2[3], $F2[5], ($rev2 == 1) ? "-" : "+";
+    print STDERR join(" ",sort {$a <=> $b} keys %cs), "\n";
+    warn "skipped";
+    next;
+  }
+  printf "%s\t%u\t%s\t%u\t%s\t%u\t%s\t%u\n",
+    $F1[2],
+    # Not exact, but will do for now; better to weed out duplicates by sort/uniq; same for positions below (3 more)
+    $rev1 ? $F1[3] + $readLen1 : $F1[3],
+    #$genes1,
+    $rev1 ? "-" : "+",
+    $site1,
+    $F2[2],
+    $rev2 ? $F2[3] + $readLen2 : $F2[3],
+    #$genes2,
+    $rev2 ? "-" : "+",
+    $site2;
+}
+exit 0;
+__END__
+==> /data6/b38/hg38_MboI_sites.txt <==
+chr1	11160
+chr1	12411
+chr1	12461
+chr1	12686
+chr1	12829
+chr1	13315
+chr1	13420
+chr1	13566
+chr1	13698
+chr1	13915
+
+./GTLdecompress -g /data6/b38/b38.bin -r /data6/HiC/SRC192/chr10b_p.gtl -p -o SAM|perl -ane 'print if ($F[1] & 0x30 == 0x30 or $F[1] & 0x30 == 0)'|head
+./GTLdecompress -g /data6/b38/b38.bin -r /data6/HiC/SRC192/chr10b_p.gtl -p -o SAM|perl -ane 'print if (($F[1] & 0x30) == 0x30 or ($F[1] & 0x30) == 0)'|head
+./GTLdecompress -g /data6/b38/b38.bin -r /data6/HiC/SRC192/chr10b_p.gtl -p -o SAM|perl -ane 'print if (($F[1] & 0x30) == 0x30 or ($F[1] & 0x30) == 0) and ($F[1] & 0x40) == 0x40'|head
+
+K00168:108:HCK7HBBXX:7:1203:24870:1578	115	chr10	67110776	254	51M	=	67111008	181	AAATTAATTACTCAAAATCCTGCCTTGAAAATATCTGTTATAATTTTTAAA	JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJFFFAA
+K00168:108:HCK7HBBXX:7:1209:11769:7715	115	chr10	67112692	254	51M	=	67112517	-125	ATTAATTTTGCAGGGTTACATTCAACAATTTGTATGTTTTGCTGCATAACA	JJJJJJJFJFJFF<JJJJFF-7<FJ-JJAFJJJAJJJJJ<F<JF-AFA-A-
+K00168:109:HFVC7BBXX:8:1225:22506:34793	67	chr10	67113564	254	49M	=	67113610	-3	CAGCAAGCGTTAGAAATGAATTTCTCAACAATTTTTGTTTTTAAGAGAC	AAFFFJFJJJJJJJJJJJJJAJJJJJJJJJJJJJJJJJJJJJJJJJJJJ

@@ -1,0 +1,1401 @@
+#!/bin/bash
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) UNIL - University of Lausanne, Switzerland      2020 Nicolas Guex and Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+
+# Reference assembly
+R=b38
+
+# Tables repository
+HT=/var/lib/hugetlbfs/global/pagesize-1GB
+
+# GTL binaries
+export GTLBINDIR=/usr/local/bin
+
+# perl code to split reads at /GATCGATC/ /TTATAA/ /GATCTAA/ /TTAGATC/ and limit the length to 60 nucleotides
+perlCode='s/ .*$//;print;$_=<>;print substr($_,0,28);$_=substr $_,28;s/GATCGATC/GATC GATC/g;s/TTATAA/TTAA TTAA/g;s/GATCTAA/GATC TTAA/g;s/TTAGATC/TTAA GATC/g;s/\s.*$//s;$_=substr $_,0,32;$l=length;$l+=28;print $_,"\n";$_=<>;print;$_=<>;print substr($_,0,$l),"\n"'
+
+destdir=/tmp
+tempdir=/tmp
+tables=/data6
+M=24
+
+function usage ()
+{
+  echo "Usage: $0 [options] -s <restriction_sites> <file_R1.fq.gz> <file_R2.fq.gz> <name>" >&2
+  echo "" >&2
+  echo "This script calls MicMap tools to map RNAseq reads from the given pair of FASTQ files" >&2
+  echo "and produces an output BAM file <name>_<ref>.bam in the destination directory" >&2
+  echo "" >&2
+  echo "options (default values are given in square brackets):" >&2
+  echo " -d <dir>    output directory, where the new BAM file named <name>_<ref>.bam will be created [$destdir]" >&2
+  echo " -R <dir>    reference tables directory, where subdirectories for each reference is located [$tables]" >&2
+  echo " -r <str>    name of the reference used for mapping [$R - so reference files will be located in $tables/$R]" >&2
+  echo " -t <dir>    Number of threads [$M]">&2
+  echo " -T <dir>    Temporary path [$tempdir]">&2
+  echo " -s <path>   File containing the genomic positions of the restriction sites">&2
+  echo " -h          show this usage info and exit">&2
+  echo " -G <name>   read group name in BAM file">&2
+  echo " -L <name>   library name in BAM file">&2
+  echo " -S <name>   sample name in BAM file">&2
+  exit 1
+}
+
+while getopts ":d:hr:t:T:R:s:G:L:S:" opt; do
+  case $opt in
+    d)
+      destdir=$OPTARG
+      ;;
+    h)
+      usage
+      ;;
+    r)
+      R=$OPTARG
+      ;;
+    R)
+      tables=$OPTARG
+      ;;
+    t)
+      M=$OPTARG
+      ;;
+    T)
+      tempdir=$OPTARG
+      ;;
+    s)
+      sites=$OPTARG
+      ;;
+    G)
+      RG=$OPTARG
+      ;;
+    L)
+      LB=$OPTARG
+      ;;
+    S)
+      SM=$OPTARG
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      usage
+      ;;
+    :)
+      echo "Option -$OPTARG requires an argument." >&2
+      usage
+      ;;
+  esac
+done
+
+if [[ "X$sites" = "X" ]]; then
+  usage
+fi
+if (( $# - $OPTIND != 2 )); then
+  usage
+fi
+shift $(($OPTIND - 1))
+f1=$1
+f2=$2
+name=${3}_c50_$R
+if [[ "X$RG" = "X" ]]; then RG=$3; fi
+if [[ "X$SM" = "X" ]]; then SM=$3; fi
+if [[ "X$LB" = "X" ]]; then LB=$3; fi
+
+# Tables
+T=$tables/$R
+
+# directory where GTL files of RNAseq are located
+D=$tempdir/$name
+rm -f $D*.gtl
+
+# destination location
+if [[ ! -d $destdir ]]; then
+  mkdir -p $destdir
+  if [[ ! -d $destdir ]]; then
+    echo >&2
+    echo "Error creating destination directory $destdir" >&2
+    echo >&2
+    exit 1
+  fi
+fi
+
+if [[ -f $destdir/$name.bam ]]; then
+  echo >&2
+  echo "Result BAM file $destdir/$name.bam already exists - will not overwrite" >&2
+  echo >&2
+  exit 2
+fi
+
+for f in $R.bin $R.cfg $R.fa.gz $R.fa.gz.fai $R.fa.gz.gzi header_$R mm_RNAseq_clean_$R.bin mm_RNAseq_clean_$R.txt; do
+  if [[ ! -s $T/$f ]]; then
+    echo >&2
+    echo "Error - file $f should be available in $T" >&2
+    echo >&2
+    exit 1
+  fi
+done
+
+if [[ ! -s $HT/$R.bin ]]; then
+  rm -f $HT/*
+  echo -n "Loading $R.bin in $HT ..."
+  MicMap -g $T/$R.bin -p $T/tbl_18nt/start0. -s $HT
+  if [[ ! -s $HT/$R.bin ]]; then
+    echo
+    echo "Error - $R.bin should be available in $HT"
+    exit 1
+  fi
+  echo "done"
+fi
+
+echo "Start processing sample $SM on `date`"
+
+echo "Running MicMap on paired files $f1 $f2"
+MicMap -g $HT/$R.bin -p $HT/start0. -A $M -G 448 -1 <(gzip -dc $f1 | perl -ne "$perlCode") -2 <(gzip -dc $f2 | perl -ne "$perlCode") -r $D
+
+echo "Sorting GTL for sample $SM"
+sortCompressCall -l 2 -N $tempdir -d $destdir -r $R -D -C $name || exit 1
+mv $tempdir/${name}_log.txt $destdir
+
+echo "Creating contact table for sample $SM"
+GTLdecompress -f -g $T/$R.bin -r <(cat $destdir/$name/chr*_[mNp].gtl $destdir/$name/C_chr*.gtl $destdir/$name/C_d?.gtl) -p -n -m -c -o SAM 2>/dev/null | grabAllContacts -sites=$sites > $destdir/A50hq_${name}_out.txt 2>$destdir/A50hq_${name}_log.txt
+sort -S 25% -k 1,1 -k 2,2n -k 5,5 -k 6,6n $destdir/A50hq_${name}_out.txt | uniq >$destdir/A50hq_${name}_sorted.txt
+cut -f 1,4,5,8 $destdir/A50hq_${name}_sorted.txt | sort -S 25% -k 1,1 -k 2,2n -k 3,3 -k 4,4n | uniq -c | grep -v '^  *1 ' | sed 's/^  *\([^ ][^ ]*\) /\1	/' > $destdir/A50hq_${name}_sorted_mult.txt
+
+echo "Creating non-contact table for sample $SM"
+GTLdecompress -f -g $T/$R.bin -r <(cat $destdir/$name/chr*_[mNp].gtl $destdir/$name/C_chr*.gtl $destdir/$name/C_d?.gtl) -p -n -m -c -o SAM 2>/dev/null | grabAllNonContacts -sites=$sites > $destdir/N50hq_${name}_out.txt 2>$destdir/N50hq_${name}_log.txt
+sort -S 25% -k 1,1 -k 2,2n -k 5,5 -k 6,6n $destdir/N50hq_${name}_out.txt | uniq >$destdir/N50hq_${name}_sorted.txt
+cut -f 1,4,5,8 $destdir/N50hq_${name}_sorted.txt | sort -S 25% -k 1,1 -k 2,2n -k 3,3 -k 4,4n | uniq -c | grep -v '^  *1 ' | sed 's/^  *\([^ ][^ ]*\) /\1	/' > $destdir/N50hq_${name}_sorted_mult.txt
+
+pushd $destdir
+
+echo "Generating $name.raw.bam"
+# do not output half-mapped (fail picard validation tests) and unmapped - not useful in any case
+samtools view -b -@$M <(cat $T/header_${R}; GTLdecompress -f -g $T/$R.bin -r <(cat $destdir/$name/*.gtl) -p -n -m -a -c -o SAM 2>/dev/null) >${name}_raw.bam || exit 1
+
+echo "Add ReadGroup info RG:$RG LB:$LB SM:$SM PL:ILLUMINA"
+samtools addreplacerg -r "ID:$RG" -r "LB:$LB" -r "SM:$SM" -r 'PL:ILLUMINA' -o ${name}_rg.bam -@$M ${name}_raw.bam || exit 1
+rm ${name}_raw.bam
+
+echo "Sort by name"
+samtools sort -n -@$M -m 2g -o ${name}_nsort.bam ${name}_rg.bam || exit 1
+rm ${name}_rg.bam
+
+echo "Fix mate info"
+samtools fixmate -m -@$M ${name}_nsort.bam ${name}_fix.bam || exit 1
+rm ${name}_nsort.bam
+
+echo "Sort by position"
+samtools sort -@$M -m 2g -o ${name}_sort.bam ${name}_fix.bam || exit 1
+rm ${name}_fix.bam
+
+echo "Add NM info"
+samtools calmd -b -@$M ${name}_sort.bam $T/$R.fa.gz >${name}_nm.bam || exit 1
+rm ${name}_sort.bam
+
+echo "Mark duplicates and index"
+samtools markdup --write-index -@$M ${name}_nm.bam ${name}.bam || exit 1
+rm ${name}_nm.bam
+# make sure the index file is more recent than the bam
+touch ${name}.bam.csi
+
+echo "Completed processing sample $name on `date`"
+popd
+exit 0
+  507  ls /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/HiC_contact/
+  508  ls -lh /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/HiC_contact/
+  509  ls /scratch/Maria/
+  510  ls -lh /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/HiC_contact/
+  511  ls /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/HiC_contact/
+  512  df -h
+  513  ls -l /tmp/*_log.txt
+  514  tail /tmp/*_log.txt
+  515  tail -n 20 /tmp/*_log.txt
+  516  dirs
+  517  pushd ~/src/MICMAP/
+  518  ls -lt|head -20
+  519  vi sortCompressCall
+  520  ls ./bin/
+  521  htop
+  522  pwd
+  523  dirs
+  524  pushd
+  525  vi grabAllContacts 
+  526  ls -l /scratch/Maria/
+  527  ls -lh /scratch/Maria/
+  528  ls -lt /tmp/
+  529  ls -lt /tmp/|head -20-
+  530  ls -lt /tmp/|head -20
+  531  ls -lth /tmp/|head -20
+  532  ls
+  533  cat mapme.new 
+  534  df -h
+  535  pwd
+  536  ls /tmp/
+  537  ls -l /tmp/|grep chris
+  538  pwd
+  539  ls
+  540  ls -l /tmp/|grep chris
+  541  ls
+  542  . mapme.new 
+  543  ls /data6/Maria/2019.10_seq/CTCNS_R4_S10_L00?_R1.fastq.gz
+  544  ls /data6/Maria/2019.10_seq/
+  545  ls /data6/Maria/2019.10_seq/CTCNS_R4_S10_L006_R1_001.fastq.gz 
+  546  ls /data6/Maria/2019.10_seq/CTCNS_R4_S10_L00?_R1_001.fastq.gz
+  547  vi mapme.new 
+  548  ls
+  549  ls -lt /tmp/|head
+  550  rm /tmp/WTCNS_R4_S9_c50_dm6_log.txt 
+  551  rm /tmp/C*_log.txt
+  552  vi mapme.new 
+  553  /data6/tools/MicMap-1.0.6529141-RelWithDebInfo-Linux-x86_64/bin/MicMap2
+  554  vi /data6/branches/CMAKE/src/MICMAP2/main.c 
+  555  vi mapme.new 
+  556  . mapme.new 
+  557  jobs
+  558  ls -l /tmp/*_log.txt
+  559  tail /tmp/*_log.txt
+  560  df -h
+  561  ls /data6/tools/
+  562  vi mapme.new 
+  563  rm /tmp/COCNS_R1_S11_c50_dm6_*
+  564  rm /tmp/CTCNS_R4_S10_c50_dm6_*
+  565  rm /tmp/WTCNS_R4_S9_c50_dm6_*
+  566  ls -lt /tmp/|head
+  567  ls -alt /tmp/|head
+  568  pwd
+  569  . mapme.new 
+  570  ls
+  571  tail -n 20 *_c50_dm6_log.txt
+  572  ~/src/MICMAP/
+  573  pushd ~/src/MICMAP/
+  574  ls
+  575  pushd
+  576  grep sortCompress hist*
+  577  vi hist_c1.txt 
+  578  pwd
+  579  cat mapme.new 
+  580  pushd
+  604  pushd /scratch/Maria/
+  605  ls -al
+  606  pigz --best *.txt
+  607  ls -al
+  608  cd /tmp/
+  609  ls
+  610  ls -l|grep chris
+  611  less all_aln.txt 
+  612  fetch rs:NP_996175
+  613  ssh prd.vital-it.ch
+  614  ssh rserv.vital-it.ch
+  615  vi ~/.ssh/known_hosts
+  616  ssh rserv.vital-it.ch
+  617  df -h
+  618  cd /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/Cp190_HiC/
+  619  ls
+  620  ls -lt
+  621  gzip -dc Cpemb_R1_L8_R1_001_v5PrjkAQMlEl.fastq.gz |head -5
+  622  gzip -dc Cpemb_R1_L8_R1_001_QAoZVE8eYYHd.fastq.gz |head -5
+  623  pwd
+  624  ls -al
+  625  scp -pr cig-shiva:/export/projects/CP190_HiC/2019.10_seq .
+  626  ls
+  627  cd 2019.10_seq/
+  628  ls -al
+  629  pigz -t *
+  630  pwd
+  631  cd ..
+  632  ls
+  633  mv 2019.10_seq FQ
+  634  mv *gz FQ
+  635  ls -al
+  636  du -h .
+  637  ls FQ/
+  638  df -h
+
+  762  /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/MicMap2 -g /data6/dm6/dm6.bin -p /data6/dm6/tbl_18nt/start0. -s /var/lib/hugetlbfs/global/pagesize-1GB
+  763  cd /data6/Maria/
+  764  ls
+  765  ls -lt
+  766  ls -lt|head -20
+  767  ls -lt|head -30
+  768  rm \(null\)_log.txt 
+  769  ls 2019.10_seq/
+  770  mkdir Cp190_HiC
+  771  cd Cp190_HiC/
+  772  ln -s /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/Cp190_HiC/FQ
+  773  pwd
+  774  cd ..
+  775  ls Cp190_HiC/FQ/
+  776  cp mapme.new mapme.Cp190
+  777  ls Cp190_HiC/FQ/ >>mapme.Cp190 
+  778  vi mapme.Cp190 
+
+  808  . mapme.Cp190 
+  809  ls
+  810  tail /tmp/*_log.txt
+  811  cat mapme.Cp190
+  812  pushd ~/src/MICMAP/
+  813  mkdir /data6/Maria/Cp190_HiC/GTL
+  814  for f in Cpemb_R1 Cpemb_R2 Cpemb_R3 WTemb_R1 WTemb_R2 WTemb_R3; do ./sortCompressCall -d /data6/Maria/Cp190_HiC/GTL -r dm6 -D -C ${f}_c50_dm6; done
+  815  ls /tmp/WT*
+  816  ls /tmp/Cpemb_R*
+  817  for f in Cpemb_R1 Cpemb_R3 WTemb_R1 WTemb_R3; do ./sortCompressCall -d /data6/Maria/Cp190_HiC/GTL -r dm6 -D -C ${f}_c50_dm6; done
+  818  ls /tmp/Cpemb_R*
+  819  ls /tmp/WT*
+  820  vi sortCompressCall
+  821  ls /tmp/WT*
+  822  for f in Cpemb_R1 Cpemb_R3 WTemb_R3; do ./sortCompressCall -d /data6/Maria/Cp190_HiC/GTL -r dm6 -D -C ${f}_c50_dm6; done
+  823  rm /data6/Maria/Cp190_HiC/GTL/WTemb_R3_c50_dm6/C_chr5.gtl
+  824  rm /data6/Maria/Cp190_HiC/GTL/Cpemb_R3_c50_dm6/C_chr1.gtl
+  825  rm /data6/Maria/Cp190_HiC/GTL/Cpemb_R3_c50_dm6/HM_chr1.gtl
+  826  rm /data6/Maria/Cp190_HiC/GTL/Cpemb_R1_c50_dm6/C_chr2.gtl
+  827  rm /data6/Maria/Cp190_HiC/GTL/Cpemb_R1_c50_dm6/C_chr3.gtl
+  828  for f in Cpemb_R1 Cpemb_R3 WTemb_R3; do ./sortCompressCall.b -d /data6/Maria/Cp190_HiC/GTL -r dm6 -D -C ${f}_c50_dm6; done
+  829  ls /tmp/
+  830  less /tmp/Dbemb_R1_c50_dm6_log.txt 
+  831  rm /tmp/Dbemb_R*
+  832  pushd
+  833  ls
+  834  ls /tmp/*_log.txt
+  835  mv /tmp/*_log.txt Cp190_HiC/GTL/
+  836  ls Cp190_HiC/GTL/
+  837  less Cp190_HiC/FQ/Dbemb_R1_S12_L008_R1_001.fastq.gz 
+  838  less Cp190_HiC/FQ/Dbemb_R1_S12_L008_R2_001.fastq.gz 
+  839  cat mapme.Cp190 
+  840  f=Dbemb_R1; gzip -dc /data6/Maria/Cp190_HiC/FQ/${f}_[LS]*_R1_001.fastq.gz | perl -ne 's/ .*$//;print;$_=<>;print substr($_,0,28);$_=substr $_,28;s/GATCGATC/GATC GATC/g;s/TTATAA/TTAA TTAA/g;s/GATCTAA/GATC TTAA/g;s/TTAGATC/TTAA GATC/g;s/\s.*$//s;$_=substr $_,0,32;$l=length;$l+=28;print $_,"\n";$_=<>;print;$_=<>;print substr($_,0,$l),"\n"'|head -8
+  841  df -h
+  842  /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/MicMap2     -g /var/lib/hugetlbfs/global/pagesize-1GB/dm6.bin     -p /var/lib/hugetlbfs/global/pagesize-1GB/start0.     -T /data6/Maria/config.json     -v 2     -G 448     -1 <(gzip -dc /data6/Maria/Cp190_HiC/FQ/${f}_[LS]*_R1_001.fastq.gz | perl -ne 's/ .*$//;print;$_=<>;print substr($_,0,28);$_=substr $_,28;s/GATCGATC/GATC GATC/g;s/TTATAA/TTAA TTAA/g;s/GATCTAA/GATC TTAA/g;s/TTAGATC/TTAA GATC/g;s/\s.*$//s;$_=substr $_,0,32;$l=length;$l+=28;print $_,"\n";$_=<>;print;$_=<>;print substr($_,0,$l),"\n"')     -2 <(gzip -dc /data6/Maria/Cp190_HiC/FQ/${f}_[LS]*_R2_001.fastq.gz | perl -ne 's/ .*$//;print;$_=<>;print substr($_,0,28);$_=substr $_,28;s/GATCGATC/GATC GATC/g;s/TTATAA/TTAA TTAA/g;s/GATCTAA/GATC TTAA/g;s/TTAGATC/TTAA GATC/g;s/\s.*$//s;$_=substr $_,0,32;$l=length;$l+=28;print $_,"\n";$_=<>;print;$_=<>;print substr($_,0,$l),"\n"')     -r /scratch/tmp/${f}_c50_dm6
+  843  rm /tmp/Dbemb_R1_c50_dm6_log.txt 
+  844  pwd
+  845  cd Cp190_HiC/
+  846  ls
+  847  cd ..
+  848  rm Cp190_HiC/FQ/Dbemb_R*
+  849  ls -l Cp190_HiC/FQ/
+  850  ls -l Cp190_HiC/
+
+  861  cd ../Maria/Cp190_HiC/
+  862  scp cig-shiva:/export/projects/CP190_HiC/2019.10_seq/Dbemb_R\* .
+  863  ls -al
+  864  mv Dbemb_R* FQ
+  865  ls -al
+  866  ls -al FQ/
+  867  dirs
+
+ 1044  cd ../../Maria/
+ 1045  ls
+ 1046  ls ~/src/psc/labnotes/Maria/
+ 1047  ls ~/src/psc/labnotes/cmp/
+ 1048  ls -l ~/src/psc/labnotes/cmp/
+ 1049  cat ~/src/psc/labnotes/cmp/samples.txt 
+ 1050  cat ~/src/psc/labnotes/cmp/toBam 
+ 1051  find /data6/Maria |grep -i bam
+ 1052  ls CutRun/
+ 1053  ls CutRun/genBam 
+ 1054  find /home/chris/src/psc/labnotes -name genBam
+ 1055  vi CutRun/genBam 
+ 1056  vi CutRun/MB2SAM 
+ 1057  cat /data6/dm6/header_dm6
+ 1058  ls
+ 1059  pwd
+ 1060  ls -lt
+ 1061  ls CTCNS_R4_S10_c50_dm6
+ 1062  find /data6/Maria |grep -i bam
+ 1063  pwd
+ 1064  vi toPairs
+ 1065  chmod +x toPairs
+ 1066  vi toPairs
+ 1067  vi CutRun/genBam 
+ 1068  vi CutRun/MB2SAM 
+ 1069  ls
+ 1070  cd Cp190_HiC/
+ 1071  ls
+ 1072  cd GTL/
+ 1073  ls
+ 1074  ls Cpemb_R1_c50_dm6
+ 1075  cat /data6/dm6/dm6.cfg 
+ 1076  SAMPLE=Cpemb_R1; CHR=1; /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/GTLdecompress -g /data6/dm6/dm6.bin -r <(cat ${SAMPLE}_c50_dm6/C_chr$CHR.gtl ${SAMPLE}_c50_dm6/{,M_}chr$CHR[abcd]_[pNm].gtl ) -p -n -m -c -o SAM >${SAMPLE}_$CHR.sam
+ 1077  ls
+ 1078  ls -lh
+ 1079  less Cpemb_R1_1.sam 
+ 1080  ls
+ 1081  cat ~/src/psc/labnotes/cmp/toBam 
+ 1082  ls
+ 1084  samtools view -bS <(cat /data6/dm6/header_dm6_withChr ${SAMPLE}_$CHR.sam) > ${SAMPLE}_$CHR.bam
+ 1085  ls -lh
+ 1086  samtools sort ${SAMPLE}_$CHR.bam ${SAMPLE}_$CHR_sorted
+ 1087  ls -lh
+ 1088  rm Cpemb_R1_1.sam Cpemb_R1_1.bam
+ 1089  mv Cpemb_R1_.bam Cpemb_R1_1.bam
+ 1090  ls -lh
+ 1091  history|tail -100 >toBam
+ 1092  vi toBam 
+ 1093  chmod +x toBam 
+ 1094  vi toBam 
+ 1095  ls /data6/b38/
+ 1096  ls -l /data6/b38
+ 1097  ls -ld /data6/b38
+ 1098  chmod g+ws /data6/b38
+ 1099  ls -ld /data6/b38
+ 1100  pwd
+ 1101  ls
+ 1102  vi toBam 
+ 1103  ./toBam 
+ 1104  ls -lh
+ 1105  samtools view Cpemb_R1_1.bam |head
+ 1106  samtools view Cpemb_R1_2.bam |head
+ 1107  samtools view Cpemb_R1_3.bam |head
+ 1108  samtools view Cpemb_R1_4.bam |head
+ 1109  samtools view Cpemb_R1_5.bam |head
+ 1110  samtools view Cpemb_R1_6.bam |head
+ 1111  samtools view Cpemb_R1_7.bam |head
+ 1112  cat /data6/dm6/dm6.cfg 
+ 1113  samtools view Cpemb_R1_4.bam |head
+ 1114  ls
+ 1115  ls Cpemb_R1_c50_dm6
+ 1116  ls -l Cpemb_R1_c50_dm6/C_*
+ 1117  vi toBam 
+ 1118  ./toBam 
+ 1119  ls
+ 1120  cat ~/src/psc/labnotes/cmp/toBam 
+ 1121  samtools merge -f ${SAMPLE}.bam ${SAMPLE}_?.bam
+ 1122  samtools index ${SAMPLE}.bam
+ 1123  ls -al
+ 1124  rm ${SAMPLE}_?.bam
+ 1125  history |tail -20 >>toBam 
+ 1126  vi toBam 
+ 1127  ls
+ 1128  pwd
+ 1129  ls -d *dm6
+ 1130  ls -d *dm6 >>toBam 
+ 1131  vi toBam 
+ 1132  screen -ls
+ 1133  screen -Aar
+ 1134  ls
+ 1135  ls -lt|head
+ 1136  cat LookAtThose.txt 
+ 1137  vi /tmp/toto
+
+ 1252  cd /scratch/Maria/
+ 1253  ls
+ 1254  mkdir /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/Cp190_HiC/contact
+ 1255  mv A50hq_* N50hq_* /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/Cp190_HiC/contact
+ 1256  ls /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/Cp190_HiC
+ 1257  ls /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/Cp190_HiC/contact/
+ 1258  mkdir /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/Cp190_HiC/bam
+ 1259  pwd
+ 1260  cd /data6/Maria/Cp190_HiC/GTL/
+ 1261  ls
+ 1262  mv *.bam* /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/Cp190_HiC/bam
+
+ 4384  . mapme.Cp190 
+ 4385  ls
+ 4386  tail /tmp/*_log.txt
+ 4387  cat mapme.Cp190
+ 4388  pushd ~/src/MICMAP/
+ 4389  mkdir /data6/Maria/Cp190_HiC/GTL
+ 4390  for f in Cpemb_R1 Cpemb_R2 Cpemb_R3 WTemb_R1 WTemb_R2 WTemb_R3; do ./sortCompressCall -d /data6/Maria/Cp190_HiC/GTL -r dm6 -D -C ${f}_c50_dm6; done
+ 4391  ls /tmp/WT*
+ 4392  ls /tmp/Cpemb_R*
+ 4393  for f in Cpemb_R1 Cpemb_R3 WTemb_R1 WTemb_R3; do ./sortCompressCall -d /data6/Maria/Cp190_HiC/GTL -r dm6 -D -C ${f}_c50_dm6; done
+ 4394  ls /tmp/Cpemb_R*
+ 4395  ls /tmp/WT*
+ 4396  vi sortCompressCall
+ 4397  ls /tmp/WT*
+ 4398  for f in Cpemb_R1 Cpemb_R3 WTemb_R3; do ./sortCompressCall -d /data6/Maria/Cp190_HiC/GTL -r dm6 -D -C ${f}_c50_dm6; done
+ 4399  rm /data6/Maria/Cp190_HiC/GTL/WTemb_R3_c50_dm6/C_chr5.gtl
+ 4400  rm /data6/Maria/Cp190_HiC/GTL/Cpemb_R3_c50_dm6/C_chr1.gtl
+ 4401  rm /data6/Maria/Cp190_HiC/GTL/Cpemb_R3_c50_dm6/HM_chr1.gtl
+ 4402  rm /data6/Maria/Cp190_HiC/GTL/Cpemb_R1_c50_dm6/C_chr2.gtl
+ 4403  rm /data6/Maria/Cp190_HiC/GTL/Cpemb_R1_c50_dm6/C_chr3.gtl
+ 4404  for f in Cpemb_R1 Cpemb_R3 WTemb_R3; do ./sortCompressCall.b -d /data6/Maria/Cp190_HiC/GTL -r dm6 -D -C ${f}_c50_dm6; done
+ 4405  ls /tmp/
+ 4406  less /tmp/Dbemb_R1_c50_dm6_log.txt 
+ 4407  rm /tmp/Dbemb_R*
+ 4408  pushd
+ 4409  ls
+ 4410  ls /tmp/*_log.txt
+ 4411  mv /tmp/*_log.txt Cp190_HiC/GTL/
+ 4412  ls Cp190_HiC/GTL/
+ 4413  less Cp190_HiC/FQ/Dbemb_R1_S12_L008_R1_001.fastq.gz 
+ 4414  less Cp190_HiC/FQ/Dbemb_R1_S12_L008_R2_001.fastq.gz 
+ 4415  cat mapme.Cp190 
+ 4416  f=Dbemb_R1; gzip -dc /data6/Maria/Cp190_HiC/FQ/${f}_[LS]*_R1_001.fastq.gz | perl -ne 's/ .*$//;print;$_=<>;print substr($_,0,28);$_=substr $_,28;s/GATCGATC/GATC GATC/g;s/TTATAA/TTAA TTAA/g;s/GATCTAA/GATC TTAA/g;s/TTAGATC/TTAA GATC/g;s/\s.*$//s;$_=substr $_,0,32;$l=length;$l+=28;print $_,"\n";$_=<>;print;$_=<>;print substr($_,0,$l),"\n"'|head -8
+ 4417  df -h
+ 4418  /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/MicMap2     -g /var/lib/hugetlbfs/global/pagesize-1GB/dm6.bin     -p /var/lib/hugetlbfs/global/pagesize-1GB/start0.     -T /data6/Maria/config.json     -v 2     -G 448     -1 <(gzip -dc /data6/Maria/Cp190_HiC/FQ/${f}_[LS]*_R1_001.fastq.gz | perl -ne 's/ .*$//;print;$_=<>;print substr($_,0,28);$_=substr $_,28;s/GATCGATC/GATC GATC/g;s/TTATAA/TTAA TTAA/g;s/GATCTAA/GATC TTAA/g;s/TTAGATC/TTAA GATC/g;s/\s.*$//s;$_=substr $_,0,32;$l=length;$l+=28;print $_,"\n";$_=<>;print;$_=<>;print substr($_,0,$l),"\n"')     -2 <(gzip -dc /data6/Maria/Cp190_HiC/FQ/${f}_[LS]*_R2_001.fastq.gz | perl -ne 's/ .*$//;print;$_=<>;print substr($_,0,28);$_=substr $_,28;s/GATCGATC/GATC GATC/g;s/TTATAA/TTAA TTAA/g;s/GATCTAA/GATC TTAA/g;s/TTAGATC/TTAA GATC/g;s/\s.*$//s;$_=substr $_,0,32;$l=length;$l+=28;print $_,"\n";$_=<>;print;$_=<>;print substr($_,0,$l),"\n"')     -r /scratch/tmp/${f}_c50_dm6
+ 4419  rm /tmp/Dbemb_R1_c50_dm6_log.txt 
+ 4420  pwd
+ 4421  cd Cp190_HiC/
+ 4422  ls
+ 4423  cd ..
+ 4424  rm Cp190_HiC/FQ/Dbemb_R*
+ 4425  ls -l Cp190_HiC/FQ/
+ 4426  ls -l Cp190_HiC/
+ 4427  pwd
+
+ 4433  vi mapme.Cp190 
+ 4434  . mapme.Cp190
+ 4435  tail /tmp/*_log.txt
+ 4436  dirs
+ 4437  cat mapme.Cp190 
+ 4438  pushd
+ 4439  vi sortCompressCall
+ 4440  dc
+ 4441  vi sortCompressCall
+ 4442  pushd
+ 4443  cat mapme.Cp190 
+ 4444  pushd
+ 4445  for f in Dbemb_R1 Dbemb_R2 Dbemb_R3; do ./sortCompressCall -d /data6/Maria/Cp190_HiC/GTL -r dm6 -D -C ${f}_c50_dm6; done
+ 4446  mv /tmp/*_log.txt Cp190_HiC/GTL/
+ 4447  pushd
+ 4448  mv /tmp/*_log.txt Cp190_HiC/GTL/
+ 4449  ls
+ 4450  ls Cp190_HiC/GTL/
+ 4451  cat mapme.Cp190 
+ 4452  for f in Cpemb_R1 Cpemb_R2 Cpemb_R3 Dbemb_R1 Dbemb_R2 Dbemb_R3 WTemb_R1 WTemb_R2 WTemb_R3; do echo "Processing $f"; ./grabAllContacts -GTLdir=/home/bix/Maria/Cp190_HiC/GTL/${f}_c50_dm6 > /scratch/Maria/A50hq_${f}_out.txt 2>A50hq_${f}_log.txt; sort -S 25% -k 1,1 -k 2,2n -k 5,5 -k 6,6n /scratch/Maria/A50hq_${f}_out.txt | uniq >/scratch/Maria/A50hq_${f}_sorted.txt; cut -f 1,4,5,8 /scratch/Maria/A50hq_${f}_sorted.txt|sort -S 25% -k 1,1 -k 2,2n -k 3,3 -k 4,4n | uniq -c | grep -v '^  *1 ' | sed 's/^  *\([^ ][^ ]*\) /\1	/' > /scratch/Maria/A50hq_${f}_sorted_mult.txt; done
+ 4453  for f in Cpemb_R1 Cpemb_R2 Cpemb_R3 Dbemb_R1 Dbemb_R2 Dbemb_R3 WTemb_R1 WTemb_R2 WTemb_R3; do echo "Processing $f"; ./grabAllNonContacts -GTLdir=/home/bix/Maria/Cp190_HiC/GTL/${f}_c50_dm6 > /scratch/Maria/N50hq_${f}_out.txt 2>N50hq_${f}_log.txt; sort -S 25% -k 1,1 -k 2,2n -k 5,5 -k 6,6n /scratch/Maria/N50hq_${f}_out.txt | uniq >/scratch/Maria/N50hq_${f}_sorted.txt; cut -f 1,4,5,8 /scratch/Maria/N50hq_${f}_sorted.txt|sort -S 25% -k 1,1 -k 2,2n -k 3,3 -k 4,4n | uniq -c | grep -v '^  *1 ' | sed 's/^  *\([^ ][^ ]*\) /\1	/' > /scratch/Maria/N50hq_${f}_sorted_mult.txt; done
+
+ 6647  cd /data6/Maria/
+ 6648  ls
+ 6649  mkdir ChIPseq
+ 6650  cd ChIPseq/
+ 6651  vi lst.txt
+ 6652  cat lst.txt 
+ 6653  vi lst.txt
+ 6654  for f in `cat lst.txt`; do wget $f; done
+ 6655  ls
+ 6656  ls*gz|wc -l
+ 6657  ls *gz|wc -l
+ 6658  ls *_001_*gz|wc -l
+ 6659  for f in *_001_*gz; do echo $f `echo $f | sed 's/_[^_.]*//'`; done
+ 6660  echo WTL3CNS_L1_R3_001_1OgBHrxiiBYZ.fastq.gz|sed 's/_[^_.]*//'
+ 6661  echo WTL3CNS_L1_R3_001_1OgBHrxiiBYZ.fastq.gz|sed 's/_[^_\.]*//'
+ 6662  for f in *_001_*gz; do echo $f `echo $f | sed 's/_[^_.]*\././'`; done
+ 6663  for f in *_001_*gz; do mv $f `echo $f | sed 's/_[^_.]*\././'`; done
+ 6664  ls
+ 6665  less ChIPseqCTC_L4_R1_001.fastq.gz 
+ 6666  gzip -dc ChIPseqCTC_L4_R1_001.fastq.gz |perl -ne '$s=<>;<>;<>;print substr($s,0,6),"\n"'|head
+ 6667  gzip -dc ChIPseqCTC_L4_R1_001.fastq.gz |perl -ne '$s=<>;<>;<>;print substr($s,0,6),"\n"'|sort -S 30% | uniq -c|sort -n
+ 6668  gzip -dc ChIPseqCTC_L4_R1_001.fastq.gz |grep ^CTAAGG|head -100
+ 6669  gzip -dc ChIPseqCTC_L4_R1_001.fastq.gz |grep ^CTAAGG|grep -v N|head -100
+ 6670  gzip -dc ChIPseqCTC_L4_R1_001.fastq.gz |grep ^CTAAGG|grep -v N|less
+ 6671  gzip -dc ChIPseqCTC_L4_R2_001.fastq.gz |grep ^CTAAGG|grep -v N|less
+ 6672  ls
+ 6673  less WTL3CNS_A_L1_I1_001.fastq.gz 
+ 6674  less WTL3CNS_A_L1_R1_001.fastq.gz 
+ 6675  ls
+ 6676  less WTL3CNS_A_L1_R2_001.fastq.gz 
+ 6677  less WTL3CNS_A_L1_R3_001.fastq.gz 
+
+ 6707  cd /data6/Maria/ChIPseq/
+ 6708  ls
+ 6709  screen -Aar
+ 6710  ls /NAS/DPT/
+ 6711  cd src/MICMAP/
+ 6712  ./sortCompressCall -d /data6/Maria/ChIPseq -r dm6 -D -C ChIPseqCTC_WT_Cp190_1_dm6
+ 6713  pushd /data6/Maria/ChIPseq/
+ 6714  ls
+ 6715  mkdir GTL
+ 6716  mv ChIPseqCTC_WT_Cp190_1_dm6 GTL/
+ 6717  ls
+ 6718  ls GTL/ChIPseqCTC_WT_Cp190_1_dm6/
+ 6719  mv /tmp/ChIPseqCTC_WT_Cp190_1_dm6_log.txt GTL/
+ 6720  ls -lh GTL/ChIPseqCTC_WT_Cp190_1_dm6/chr*
+ 6721  ls -lh GTL/ChIPseqCTC_WT_Cp190_1_dm6/chr*.gtl
+ 6722  GTLdecompress -g /data6/dm6/dm6.bin -r GTL/ChIPseqCTC_WT_Cp190_1_dm6/chr1a_g.gtl -a -o SAM|less
+ 6723  jobs
+ 6724  kill %1
+ 6725  ~/src/MICMAP/GTLdecompress -g /data6/dm6/dm6.bin -r GTL/ChIPseqCTC_WT_Cp190_1_dm6/chr1a_g.gtl -a -o SAM|less
+ 6726  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_WT_Cp190_1_dm6 -c 1 -p 18227
+ 6727  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_WT_Cp190_1_dm6 -c 1 -p 18490
+ 6728  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_WT_Cp190_1_dm6 -c 1 -p 18490 2>/tmp/log.txt
+ 6729  cat /tmp/log.txt 
+ 6730  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_WT_Cp190_1_dm6 -c 1 -p 18490
+ 6731  pwd
+ 6732  less toto/ChIPseqCTC_WT_Cp190_1_R1.fastq.gz 
+ 6733  gzip -dc toto/ChIPseqCTC_WT_Cp190_1_R1.fastq.gz |perl -ne '$s=<>;<>;<>;print substr($s,0,6),"\n"'|sort -S 30% | uniq -c|sort -n
+ 6734  ls
+ 6735  vi splitBarCode 
+ 6736  cd
+ 6737  screen -Aar
+ 6738  cd /data6/Maria/ChIPseq/
+ 6739  ls
+ 6740  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_WT_Cp190_1_dm6 -c 1 -p 18490
+ 6741  history|tail
+ 6742  pwd
+ 6743  ls -al
+ 6744  screen -Aar
+ 6745  cd /data6/Maria/ChIPseq/
+ 6746  ls
+ 6747  ls ~/src/MICMAP/
+ 6748  cp ~/src/MICMAP/autoTrim splitBarCode
+ 6749  ls
+ 6750  vi splitBarCode 
+ 6751  ls
+ 6752  ./splitBarCode <(gzip -dc ChIPseqCTC_L4_R1_001.fastq.gz) <(gzip -dc ChIPseqCTC_L4_R2_001.fastq.gz) | less
+ 6753  vi splitBarCode 
+ 6754  perl -cw splitBarCode 
+ 6755  vi splitBarCode 
+ 6756  perldoc IO::Handle
+ 6757  perldoc IO::Pipe
+ 6758  perldoc IO::Fifo
+ 6759  perldoc IO::File
+ 6760  perldoc IO::Pipe
+ 6761  ls /usr/lib64/perl5/IO
+ 6762  grep IO::Pipe ~/src/psc/*
+ 6763  vi /home/chris/src/psc/process_defrag
+ 6764  cat /home/chris/src/psc/process_defrag >>splitBarCode 
+ 6765  vi splitBarCode 
+ 6766  ls
+ 6767  head <(gzip -dc ChIPseqCTC_L4_R1_001.fastq.gz) <(gzip -dc ChIPseqCTC_L4_R2_001.fastq.gz)
+ 6768  vi splitBarCode 
+ 6769  ls
+ 6770  mkdir toto
+ 6771  cd toto
+ 6772  ../splitBarCode <(gzip -dc ../ChIPseqCTC_L4_R1_001.fastq.gz | head -100000) <(gzip -dc ../ChIPseqCTC_L4_R2_001.fastq.gz | head -100000)
+ 6773  ls
+ 6774  ls -l
+ 6775  gzip -dc ChIPseqCTC_Bad_Tag_R1.fastq.gz 
+ 6776  gzip -dc ChIPseqCTC_Bad_Tag_R2.fastq.gz 
+ 6777  gzip -dc ChIPseqCTC_Bad_Tag_R1.fastq.gz |perl -ne '$s=<>;<>;<>;print substr($s,0,6),"\n"'
+ 6778  gzip -dc ChIPseqCTC_Bad_Tag_R2.fastq.gz |perl -ne '$s=<>;<>;<>;print substr($s,0,6),"\n"'
+ 6779  ls
+ 6780  ls -l
+ 6781  less ChIPseqCTC_No_Tag_R1.fastq.gz 
+ 6782  ls
+ 6783  pwd
+ 6784  ls
+ 6785  rm *
+ 6786  ls
+ 6787  vi ../splitBarCode 
+ 6788  ../splitBarCode <(gzip -dc ../ChIPseqCTC_L4_R1_001.fastq.gz) <(gzip -dc ../ChIPseqCTC_L4_R2_001.fastq.gz)
+ 6789  ls
+ 6790  less ChIPseqCTC_CTCF_OE_Cp190_2_R1.fastq.gz 
+ 6791  ls
+ 6792  rm *
+ 6793  vi ../splitBarCode 
+ 6794  perl -cw ../splitBarCode 
+ 6795  ../splitBarCode <(gzip -dc ../ChIPseqCTC_L4_R1_001.fastq.gz) <(gzip -dc ../ChIPseqCTC_L4_R2_001.fastq.gz)
+ 6796  ls -lh
+ 6797  ls /var/lib/hugetlbfs/global/pagesize-1GB/
+ 6798  for f in ChIPseqCTC_C*_R1.fastq.gz; do /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/MicMap2 -g /var/lib/hugetlbfs/global/pagesize-1GB/dm6.bin -p /var/lib/hugetlbfs/global/pagesize-1GB/start0. -T /data6/Maria/config.json -v 2 -G 448 -1 <(gzip -dc $f | sed 's/ .*$//') -2 <(gzip -dc `echo $f | sed 's/_R1/_R2/'` | sed 's/ .*$//') -r /tmp/`basename $f _R1.fastq.gz`_dm6; done
+ 6799  df -h
+ 6800  ls /tmp/*log
+ 6801  ls /tmp/*log*
+ 6802  ls /tmp/*_log.txt
+ 6803  ls -l /tmp/ChIPseqCTC_C*_log.txt
+ 6804  tail /tmp/ChIPseqCTC_C*_log.txt
+ 6805  less /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_log.txt
+ 6806  grep -A 8 ^TOTAL: /tmp/ChIPseqCTC_C*_log.txt
+ 6807  ls
+ 6808  ls -lg *_R1.fastq.gz
+ 6809  ls
+ 6810  for f in ChIPseqCTC_W*_R1.fastq.gz; do /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/MicMap2 -g /var/lib/hugetlbfs/global/pagesize-1GB/dm6.bin -p /var/lib/hugetlbfs/global/pagesize-1GB/start0. -T /data6/Maria/config.json -v 2 -G 448 -1 <(gzip -dc $f | sed 's/ .*$//') -2 <(gzip -dc `echo $f | sed 's/_R1/_R2/'` | sed 's/ .*$//') -r /tmp/`basename $f _R1.fastq.gz`_dm6; done
+ 6811  grep -A 8 ^TOTAL: /tmp/ChIPseqCTC_*_log.txt
+ 6812  less /tmp/ChIPseqCTC_WT_Cp190_1_dm6_log.txt 
+ 6813  /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/GTLdecompress -g /data6/dm6/dm6.bin -r /tmp/ChIPseqCTC_WT_Cp190_1_dm6_A_UM_AA.gtl -u -o SAM|less
+ 6814  /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/GTLdecompress -g /data6/dm6/dm6.bin -r /tmp/ChIPseqCTC_WT_Cp190_1_dm6_A_UM_AA.gtl -u -o SAM|cut -f 9|head
+ 6815  /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/GTLdecompress -g /data6/dm6/dm6.bin -r /tmp/ChIPseqCTC_WT_Cp190_1_dm6_A_UM_AA.gtl -u -o SAM|cut -f 10|head
+ 6816  /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/GTLdecompress -g /data6/dm6/dm6.bin -r /tmp/ChIPseqCTC_WT_Cp190_1_dm6_A_UM_AA.gtl -u -o SAM|cut -f 10|head -10000|sort|less
+ 6817  /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/GTLdecompress -g /data6/dm6/dm6.bin -r /tmp/ChIPseqCTC_CTCF_0_CTCF_1_dm6_A_UM_AA.gtl -u -o SAM|cut -f 10|head -10000|sort|less
+ 6818  pwd
+ 6819  rm /tmp/ChIPseqCTC_*
+ 6820  ls
+ 6821  pwd
+ 6822  rm *
+ 6823  cd ..
+ 6824  ls
+ 6825  mv toto split
+ 6826  cd split/
+ 6827  perl -cw ../splitBarCode 
+ 6828  ../splitBarCode <(gzip -dc ../ChIPseqCTC_L4_R1_001.fastq.gz) <(gzip -dc ../ChIPseqCTC_L4_R2_001.fastq.gz)
+ 6829  ls
+ 6830  ls -lh
+ 6831  less ChIPseqCTC_Cp190_KO_Cp190_1_R1.fastq.gz 
+ 6832  for f in ChIPseqCTC_[CW]*_R1.fastq.gz; do /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin/MicMap2 -g /var/lib/hugetlbfs/global/pagesize-1GB/dm6.bin -p /var/lib/hugetlbfs/global/pagesize-1GB/start0. -T /data6/Maria/config.json -v 2 -G 448 -1 <(gzip -dc $f | sed 's/ .*$//') -2 <(gzip -dc `echo $f | sed 's/_R1/_R2/'` | sed 's/ .*$//') -r /tmp/`basename $f _R1.fastq.gz`_dm6; done
+ 6833  grep -A 8 ^TOTAL: /tmp/ChIPseqCTC_*_log.txt
+ 6834  pwd
+ 6835  ls
+ 6836  cd ..
+ 6837  ls
+ 6838  ls GTL/
+ 6839  rm GTL/ChIPseqCTC_WT_Cp190_1_dm6*
+ 6840  rm -rf GTL/ChIPseqCTC_WT_Cp190_1_dm6
+ 6841  mv /tmp/ChIPseqCTC_*_dm6_log.txt GTL/
+ 6842  ls GTL/
+ 6843  pushd ~/src/MICMAP/
+ 6844  for f in /data6/Maria/ChIPseq/GTL/ChIPseqCTC_*_log.txt; do ./sortCompressCall -d /data6/Maria/ChIPseq/GTL -r dm6 -D -C `basename $f _log.txt`; done
+ 6845  for f in /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_log.txt; do ./sortCompressCall -d /data6/Maria/ChIPseq/GTL -r dm6 -D -C `basename $f _log.txt`; done
+ 6846  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6847  for f in /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_log.txt; do ./sortCompressCall -d /data6/Maria/ChIPseq/GTL -r dm6 -D -C `basename $f _log.txt`; done
+ 6848  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6849  ./sortCompressCall
+ 6850  vi sortCompressCall
+ 6851  diff -u sortCompressCall sortCompressCall.1
+ 6852  cp sortCompressCall sortCompressCall.dry
+ 6853  vi sortCompressCall.dry 
+ 6854  for f in /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_log.txt; do ./sortCompressCall.dry -d /data6/Maria/ChIPseq/GTL -r dm6 -D -C `basename $f _log.txt`; done
+ 6855  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort 
+ 6856  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6857  ls -lt /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6|head
+ 6858  ~/src/github/sib/micmap/build/src/GTL/tools/GTLcnt 
+ 6859  ~/src/github/sib/micmap/build/src/GTL/tools/GTLcnt -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT.gtl 
+ 6860  ~/src/github/sib/micmap/build/src/GTL/tools/GTLcnt -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT_TAAAAAAA.gtl 
+ 6861  ~/src/github/sib/micmap/build/src/GTL/tools/GTLcnt -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT_GAAAAAAA.gtl 
+ 6862  ~/src/github/sib/micmap/build/src/GTL/tools/GTLcnt -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl 
+ 6863  echo $((88482+362777+73029))
+ 6864  (~/src/github/sib/micmap/build/src/GTL/tools/GTLdecompress -g /data6/dm6/dm6.bin -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -u -d |LC_ALL=C sort -S 30% >/tmp/o_r1.fq) 2>&1 | LC_ALL=C sort -S 30% >/tmp/o_r2.fq
+ 6865  less /tmp/o_r1.fq 
+ 6866  (~/src/github/sib/micmap/build/src/GTL/tools/GTLdecompress -g /data6/dm6/dm6.bin -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -u -d |LC_ALL=C sort -n -S 30% >/tmp/o_r1.fq) 2>&1 | LC_ALL=C sort -n -S 30% >/tmp/o_r2.fq
+ 6867  less /tmp/o_r1.fq 
+ 6868  less /tmp/o_r2.fq 
+ 6869  head -12 /tmp/o_r?.fq 
+ 6870  (~/src/github/sib/micmap/build/src/GTL/tools/GTLdecompress -g /data6/dm6/dm6.bin -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT.gtl -u -d |LC_ALL=C sort -n -S 30% >/tmp/n1_r1.fq) 2>&1 | LC_ALL=C sort -n -S 30% >/tmp/n1_r2.fq
+ 6871  (~/src/github/sib/micmap/build/src/GTL/tools/GTLdecompress -g /data6/dm6/dm6.bin -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT_GAAAAAAA.gtl -u -d |LC_ALL=C sort -n -S 30% >/tmp/n2_r1.fq) 2>&1 | LC_ALL=C sort -n -S 30% >/tmp/n2_r2.fq
+ 6872  (~/src/github/sib/micmap/build/src/GTL/tools/GTLdecompress -g /data6/dm6/dm6.bin -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT_TAAAAAAA.gtl -u -d |LC_ALL=C sort -n -S 30% >/tmp/n3_r1.fq) 2>&1 | LC_ALL=C sort -n -S 30% >/tmp/n3_r2.fq
+ 6873  diff -u /tmp/o_r1.fq <(LC_ALL=C sort -n -S 40% /tmp/n?_r1.fq)|head -20
+ 6874  grep '^15178961. ' /tmp/o_r?.fq /tmp/n?_r?.fq 
+ 6875  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6876  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6877  grep '^15178961. ' /tmp/o_r?.fq /tmp/n?_r?.fq 
+ 6878  (~/src/github/sib/micmap/build/src/GTL/tools/GTLdecompress -g /data6/dm6/dm6.bin -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT.gtl -u -d |LC_ALL=C sort -n -S 30% >/tmp/n1_r1.fq) 2>&1 | LC_ALL=C sort -n -S 30% >/tmp/n1_r2.fq
+ 6879  (~/src/github/sib/micmap/build/src/GTL/tools/GTLdecompress -g /data6/dm6/dm6.bin -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT_1GAAAAAAA.gtl -u -d |LC_ALL=C sort -n -S 30% >/tmp/n2_r1.fq) 2>&1 | LC_ALL=C sort -n -S 30% >/tmp/n2_r2.fq
+ 6880  (~/src/github/sib/micmap/build/src/GTL/tools/GTLdecompress -g /data6/dm6/dm6.bin -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT_2TAAAAAAA.gtl -u -d |LC_ALL=C sort -n -S 30% >/tmp/n3_r1.fq) 2>&1 | LC_ALL=C sort -n -S 30% >/tmp/n3_r2.fq
+ 6881  grep '^15178961. ' /tmp/o_r?.fq /tmp/n?_r?.fq 
+ 6882  ~/src/github/sib/micmap/build/src/GTL/tools/GTLcnt -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl 
+ 6883  ~/src/github/sib/micmap/build/src/GTL/tools/GTLcnt -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT.gtl 
+ 6884  ~/src/github/sib/micmap/build/src/GTL/tools/GTLcnt -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT_1GAAAAAAA.gtl 
+ 6885  ~/src/github/sib/micmap/build/src/GTL/tools/GTLcnt -r /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT_2TAAAAAAA.gtl 
+ 6886  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6887  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6888  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6889  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6890  echo $((536447-90353))
+ 6891  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6892  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6893  ~/src/github/sib/micmap/build/src/GTL/tools/GTLlist -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl 
+ 6894  echo $((435806+88482))
+ 6895  echo $((65536*9))
+ 6896  echo $((65536*9 + 55130))
+ 6897  echo $((644954-524288))
+ 6898  echo $((65536*8))
+ 6899  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6900  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6901  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6902  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6903  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6904  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6905  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6906  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6907  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6908  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6909  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6910  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6911  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6912  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6 2>/tmp/log.txt
+ 6913  less /tmp/log.txt 
+ 6914  rm /tmp/log.txt 
+ 6915  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6916  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6917  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6918  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6919  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6920  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6921  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6922  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6923  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6924  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6925  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6926  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6927  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6928  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6929  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6930  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6931  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6932  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6933  valgrind
+ 6934  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6935  valgrind ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6936  ls
+ 6937  less /data6/Maria/ChIPseq/ChIPseqCTC_L4_R1_001.fastq.gz 
+ 6938  echo NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN|wc
+ 6939  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6940  valgrind ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6941  rm /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6/UM_GT*.gtl
+ 6942  ~/src/github/sib/micmap/build/src/GTL/tools/GTLsimpleSort -m 10 -s bz2 -r /tmp/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_A_UM_GT.gtl -c 720896 -o /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6
+ 6943  for f in /data6/Maria/ChIPseq/GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6_log.txt; do ./sortCompressCall.dry -d /data6/Maria/ChIPseq/GTL -r dm6 -D -C `basename $f _log.txt`; done
+ 6944  cd /data6/Maria/ChIPseq/
+ 6945  ls
+ 6946  vi splitBarCode 
+ 6947  ls
+ 6948  ls -lh toto/
+ 6949  less ChIPseqCTC_CTCF_OE_Cp190_2_R1.fastq.gz
+ 6950  less toto/ChIPseqCTC_CTCF_OE_Cp190_2_R1.fastq.gz
+ 6951  less toto/ChIPseqCTC_CTCF_OE_Cp190_2_R2.fastq.gz
+
+ 7235  cd /data6/Maria/ChIPseq/
+ 7236  ls
+ 7237  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -c 1 -p 18490
+ 7238  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_0_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_0_Cp190_2_dm6 -c 1 -p 18490
+ 7239  ls GTL/
+ 7240  vi tst_snp.txt
+ 7241  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_0_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_0_Cp190_2_dm6 -c 1 -p 18490 -s tst_snp.txt 
+ 7242  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -2 GTL/ChIPseqCTC_WT_CTCF_1_dm6 -3 GTL/ChIPseqCTC_WT_CTCF_2_dm6 -4 GTL/ChIPseqCTC_WT_Cp190_1_dm6 -5 GTL/ChIPseqCTC_WT_Cp190_2_dm6 -c 1 -p 18490 -s tst_snp.txt 
+ 7243  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_0_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_0_Cp190_2_dm6 -c 1 -p 18490 -s tst_snp.txt 
+ 7244  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -2 GTL/ChIPseqCTC_WT_CTCF_1_dm6 -3 GTL/ChIPseqCTC_WT_CTCF_2_dm6 -4 GTL/ChIPseqCTC_WT_Cp190_1_dm6 -5 GTL/ChIPseqCTC_WT_Cp190_2_dm6 -c 1 -p 18490 -s tst_snp.txt 
+ 7245  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_0_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_0_Cp190_2_dm6 -c 1 -p 18490 -s tst_snp.txt 
+ 7246  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -2 GTL/ChIPseqCTC_WT_CTCF_1_dm6 -3 GTL/ChIPseqCTC_WT_CTCF_2_dm6 -4 GTL/ChIPseqCTC_WT_Cp190_1_dm6 -5 GTL/ChIPseqCTC_WT_Cp190_2_dm6 -c 1 -p 18490 -s tst_snp.txt 
+ 7247  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_Cp190_KO_CTCF_1_dm6 -2 GTL/ChIPseqCTC_Cp190_KO_CTCF_2_dm6 -3 GTL/ChIPseqCTC_Cp190_KO_Cp190_1_dm6 -4 GTL/ChIPseqCTC_Cp190_KO_Cp190_2_dm6 -c 1 -p 18490 -s tst_snp.txt 
+ 7248  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_0_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_0_Cp190_2_dm6 -5 GTL/ChIPseqCTC_Cp190_KO_CTCF_2_dm6 -c 1 -p 18490 -s tst_snp.txt 
+ 7249  cat /data6/dm6/dm6.cfg 
+ 7250  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_0_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_0_Cp190_2_dm6 -5 GTL/ChIPseqCTC_Cp190_KO_CTCF_2_dm6 -c 3 -p 7350000 -s tst_snp.txt 
+ 7251  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_0_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_0_Cp190_2_dm6 -5 GTL/ChIPseqCTC_Cp190_KO_CTCF_2_dm6 -c 3 -p 7356360 -s tst_snp.txt 
+ 7252  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_0_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_0_Cp190_2_dm6 -5 GTL/ChIPseqCTC_Cp190_KO_CTCF_1_dm6 -6 GTL/ChIPseqCTC_Cp190_KO_CTCF_2_dm6 -7 GTL/ChIPseqCTC_Cp190_KO_Cp190_1_dm6 -8 GTL/ChIPseqCTC_Cp190_KO_Cp190_2_dm6 -c 3 -p 7356310 -s tst_snp.txt 
+ 7253  cat /data6/dm6/dm6.cfg 
+ 7254  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_0_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_0_Cp190_2_dm6 -5 GTL/ChIPseqCTC_Cp190_KO_CTCF_1_dm6 -6 GTL/ChIPseqCTC_Cp190_KO_CTCF_2_dm6 -7 GTL/ChIPseqCTC_Cp190_KO_Cp190_1_dm6 -8 GTL/ChIPseqCTC_Cp190_KO_Cp190_2_dm6 -c 5 -p 15271000 -s tst_snp.txt 
+ 7255  pwd
+ 7256  history |tail -50 >>splitBarCode 
+ 7257  vi splitBarCode 
+ 7258  ls
+ 7259  cat lst.txt 
+ 7260  vi splitBarCode 
+ 7261  cd GTL/
+ 7262  ls
+ 7263  mkdir new
+ 7264  mv ChIPseqCTC_CTCF_0_CTCF_2_dm6 new/ChIPseqCTC_Cp190_KO_CTCF_2_dm6
+ 7265  mv ChIPseqCTC_CTCF_0_CTCF_2_dm6_log.txt new/ChIPseqCTC_Cp190_KO_CTCF_2_dm6_log.txt
+ 7266  mv ChIPseqCTC_Cp190_KO_CTCF_2_dm6 new/ChIPseqCTC_CTCF_0_CTCF_2_dm6
+ 7267  mv ChIPseqCTC_Cp190_KO_CTCF_2_dm6_log.txt new/ChIPseqCTC_CTCF_0_CTCF_2_dm6_log.txt
+ 7268  ls
+ 7269  mv new/ChIPseqCTC_C* .
+ 7270  ls
+ 7271  rmdir new/
+ 7272  cd ..
+ 7273  ls
+ 7274  mkdir new
+ 7275  mv ChIPseqCTC_CTCF_0_CTCF_2.bam new/ChIPseqCTC_Cp190_KO_CTCF_2.bam
+ 7276  mv ChIPseqCTC_CTCF_0_CTCF_2.bam.bai new/ChIPseqCTC_Cp190_KO_CTCF_2.bam.bai
+ 7277  mv ChIPseqCTC_Cp190_KO_CTCF_2.bam new/ChIPseqCTC_CTCF_0_CTCF_2.bam
+ 7278  mv ChIPseqCTC_Cp190_KO_CTCF_2.bam.bai new/ChIPseqCTC_CTCF_0_CTCF_2.bam.bai
+ 7279  ls
+ 7280  mv new/ChIPseqCTC_C* .
+ 7281  rmdir new/
+ 7282  ls
+ 7283  vi README.txt 
+ 7284  cd split/
+ 7285  ls
+ 7286  mkdir new
+ 7287  mv ChIPseqCTC_CTCF_0_CTCF_2_R1.fastq.gz new/ChIPseqCTC_Cp190_KO_CTCF_2_R1.fastq.gz
+ 7288  mv ChIPseqCTC_CTCF_0_CTCF_2_R2.fastq.gz new/ChIPseqCTC_Cp190_KO_CTCF_2_R2.fastq.gz
+ 7289  mv ChIPseqCTC_Cp190_KO_CTCF_2_R1.fastq.gz new/ChIPseqCTC_CTCF_0_CTCF_2_R1.fastq.gz
+ 7290  mv ChIPseqCTC_Cp190_KO_CTCF_2_R2.fastq.gz new/ChIPseqCTC_CTCF_0_CTCF_2_R2.fastq.gz
+ 7291  ls
+ 7292  mv new/* .
+ 7293  rmdir new
+ 7294  cd ..
+ 7295  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_0_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_0_Cp190_2_dm6 -5 GTL/ChIPseqCTC_Cp190_KO_CTCF_1_dm6 -6 GTL/ChIPseqCTC_Cp190_KO_CTCF_2_dm6 -7 GTL/ChIPseqCTC_Cp190_KO_Cp190_1_dm6 -8 GTL/ChIPseqCTC_Cp190_KO_Cp190_2_dm6 -c 5 -p 15271000 -s tst_snp.txt 
+ 7296  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_0_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_0_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_0_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_0_Cp190_2_dm6 -5 GTL/ChIPseqCTC_Cp190_KO_CTCF_1_dm6 -6 GTL/ChIPseqCTC_Cp190_KO_CTCF_2_dm6 -7 GTL/ChIPseqCTC_Cp190_KO_Cp190_1_dm6 -8 GTL/ChIPseqCTC_Cp190_KO_Cp190_2_dm6 -c 3 -p 7356310 -s tst_snp.txt 
+ 7297  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 ChIPseqCTC_CTCF_0_CTCF_1.bam -2 ChIPseqCTC_CTCF_0_CTCF_2.bam -3 ChIPseqCTC_CTCF_0_Cp190_1.bam -4 ChIPseqCTC_CTCF_0_Cp190_2.bam -5 ChIPseqCTC_Cp190_KO_CTCF_1.bam -6 ChIPseqCTC_Cp190_KO_CTCF_2.bam -7 ChIPseqCTC_Cp190_KO_Cp190_1.bam -8 ChIPseqCTC_Cp190_KO_Cp190_2.bam -c 3 -p 7356310 -s tst_snp.txt 
+
+ 7307  cd /data6/Maria/ChIPseq/
+ 7308  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 ChIPseqCTC_CTCF_OE_CTCF_1.bam -2 ChIPseqCTC_CTCF_OE_CTCF_2.bam -3 ChIPseqCTC_CTCF_OE_Cp190_1.bam -4 ChIPseqCTC_CTCF_OE_Cp190_2.bam -c 3 -p 7356310 -s tst_snp.txt 
+ 7309  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 GTL/ChIPseqCTC_CTCF_OE_CTCF_1_dm6 -2 GTL/ChIPseqCTC_CTCF_OE_CTCF_2_dm6 -3 GTL/ChIPseqCTC_CTCF_OE_Cp190_1_dm6 -4 GTL/ChIPseqCTC_CTCF_OE_Cp190_2_dm6 -c 3 -p 7356310 -s tst_snp.txt 
+ 7310  pwd
+ 7311  ls
+ 7312  cd split/
+ 7313  ls
+ 7314  gzip -dc ChIPseqCTC_CTCF_OE_CTCF_2_R1.fastq.gz|less
+ 7315  gzip -dc ChIPseqCTC_CTCF_OE_CTCF_2_R1.fastq.gz|perl -ne '<>;print;<>;<>'|heda
+ 7316  gzip -dc ChIPseqCTC_CTCF_OE_CTCF_2_R1.fastq.gz|perl -ne '<>;print;<>;<>'|head
+ 7317  gzip -dc ChIPseqCTC_CTCF_OE_CTCF_2_R1.fastq.gz|perl -ne '$_=<>;print;<>;<>'|head
+ 7318  gzip -dc ChIPseqCTC_CTCF_OE_CTCF_2_R1.fastq.gz|perl -ne '$_=<>;print;<>;<>'|head -1000000|sort|uniq -c|less
+ 7319  gzip -dc ChIPseqCTC_CTCF_OE_CTCF_1_R1.fastq.gz|perl -ne '$_=<>;print;<>;<>'|head -1000000|sort|uniq -c|less
+ 7320  samtools
+ 7321  samtools markdup --help
+ 7322  pwd
+ 7323  cd ..
+ 7324  ls
+ 7325  samtools markdup -r --write-index -@32 ChIPseqCTC_CTCF_OE_CTCF_2.bam ChIPseqCTC_CTCF_OE_CTCF_2_filt.bam
+ 7326  samtools fixmate --help
+ 7327  samtools fixmate -@32 -r ChIPseqCTC_CTCF_OE_CTCF_2.bam ChIPseqCTC_CTCF_OE_CTCF_2_fix.bam
+ 7328  samtools -sort --help
+ 7329  samtools sort --help
+ 7330  samtools sort -n -@32 -m 4g -o ChIPseqCTC_CTCF_OE_CTCF_2_nsort.bam ChIPseqCTC_CTCF_OE_CTCF_2.bam
+ 7331  rm ChIPseqCTC_CTCF_OE_CTCF_2_filt.bam ChIPseqCTC_CTCF_OE_CTCF_2_fix.bam
+ 7332  samtools fixmate -@32 -r ChIPseqCTC_CTCF_OE_CTCF_2_nsort.bam ChIPseqCTC_CTCF_OE_CTCF_2_fix.bam
+ 7333  samtools markdup -r --write-index -@32 ChIPseqCTC_CTCF_OE_CTCF_2_fix.bam ChIPseqCTC_CTCF_OE_CTCF_2_filt.bam
+ 7334  samtools view ChIPseqCTC_CTCF_OE_CTCF_2_fix.bam|less
+ 7335  samtools sort -@32 -m 4g -o ChIPseqCTC_CTCF_OE_CTCF_2_sort.bam ChIPseqCTC_CTCF_OE_CTCF_2_fix.bam 
+ 7336  rm ChIPseqCTC_CTCF_OE_CTCF_2_filt.bam 
+ 7337  samtools markdup -r --write-index -@32 ChIPseqCTC_CTCF_OE_CTCF_2_sort.bam ChIPseqCTC_CTCF_OE_CTCF_2_filt.bam
+ 7338  ls -lt|head -20
+ 7339  rm ChIPseqCTC_CTCF_OE_CTCF_2_filt.bam
+ 7340  samtools sort
+ 7341  samtools fixmate -@32 -r ChIPseqCTC_CTCF_OE_CTCF_2_sort.bam ChIPseqCTC_CTCF_OE_CTCF_2_fix2.bam
+ 7342   ls -lt
+ 7343  rm ChIPseqCTC_CTCF_OE_CTCF_2_fix2.bam ChIPseqCTC_CTCF_OE_CTCF_2_sort.bam ChIPseqCTC_CTCF_OE_CTCF_2_fix.bam 
+ 7344  samtools fixmate
+ 7345  samtools fixmate -m -@32 -r ChIPseqCTC_CTCF_OE_CTCF_2_nsort.bam ChIPseqCTC_CTCF_OE_CTCF_2_fix.bam
+ 7346  samtools sort -@32 -m 4g -o ChIPseqCTC_CTCF_OE_CTCF_2_sort.bam ChIPseqCTC_CTCF_OE_CTCF_2_fix.bam
+ 7347  samtools view ChIPseqCTC_CTCF_OE_CTCF_2_fix.bam|less
+ 7348  samtools markdup -r --write-index -@32 ChIPseqCTC_CTCF_OE_CTCF_2_sort.bam ChIPseqCTC_CTCF_OE_CTCF_2_filt.bam
+ 7349  ls -alth
+ 7350  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 ChIPseqCTC_CTCF_OE_CTCF_1.bam -2 ChIPseqCTC_CTCF_OE_CTCF_2_filt.bam -3 ChIPseqCTC_CTCF_OE_Cp190_1.bam -4 ChIPseqCTC_CTCF_OE_Cp190_2.bam -c 3 -p 7356310 -s tst_snp.txt 
+ 7351  ls
+ 7352  history|tail -100 >dedup
+ 7353  ls >>dedup 
+ 7354  vi dedup 
+ 7355  chmod +x dedup 
+ 7356  vi dedup 
+ 7357  ls
+ 7358  cat dedup 
+ 7359  rm ChIPseqCTC_CTCF_OE_CTCF_2_nsort.bam ChIPseqCTC_CTCF_OE_CTCF_2_sort.bam ChIPseqCTC_CTCF_OE_CTCF_2_fix.bam
+ 7360  ls
+ 7361  ./dedup 
+ 7362  ls -alth
+ 7363  ls -l
+ 7364  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 ChIPseqCTC_CTCF_OE_CTCF_1_filt.bam -2 ChIPseqCTC_CTCF_OE_CTCF_2_filt.bam -3 ChIPseqCTC_CTCF_OE_Cp190_1_filt.bam -4 ChIPseqCTC_CTCF_OE_Cp190_2_filt.bam -c 3 -p 7356310 -s tst_snp.txt 
+ 7365  GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 ChIPseqCTC_CTCF_0_CTCF_1_filt.bam -2 ChIPseqCTC_CTCF_0_CTCF_2_filt.bam -3 ChIPseqCTC_CTCF_0_Cp190_1_filt.bam -4 ChIPseqCTC_CTCF_0_Cp190_2_filt.bam -5 ChIPseqCTC_Cp190_KO_CTCF_1_filt.bam -6 ChIPseqCTC_Cp190_KO_CTCF_2_filt.bam -7 ChIPseqCTC_Cp190_KO_Cp190_1_filt.bam -8 ChIPseqCTC_Cp190_KO_Cp190_2_filt.bam -c 3 -p 7356310 -s tst_snp.txt 
+ 7366  ls -lh *_filt.bam
+ 7367  vi README.txt 
+ 7368  cat dedup 
+ 7369  cd /data6/Maria/ChIPseq/
+ 7370  ls
+ 7371  ls GTL/
+ 7372  cd GTL/
+ 7373  ls
+ 7374  ls /data6/
+ 7375  ls /data6/tools/
+ 7376  ls /data6/tools/MicMap-2.0.1357a2e-Release-Linux-x86_64/
+ 7377  ls /data6/tools/MicMap-2.0.1357a2e-Release-Linux-x86_64/bin/
+ 7378  /data6/tools/MicMap-2.0.1357a2e-Release-Linux-x86_64/bin/GTLdiffCaller3 
+ 7379  /data6/tools/MicMap-2.0.1357a2e-Release-Linux-x86_64/bin/GTLdiffCaller
+ 7380  ldd /data6/tools/MicMap-2.0.1357a2e-Release-Linux-x86_64/bin/GTLdiffCaller
+ 7381  ldd /data6/tools/bin/GTLdiffCaller3 
+ 7382  /data6/tools/bin/GTLdiffCaller3 
+
+ 7417  cd /data6/Maria/ChIPseq/
+ 7418  ls
+ 7419  mv matchGenotype getGenotype GTL/
+ 7420  cd GTL/
+ 7421  ls
+ 7422  for f in ChIPseqCTC_Cp190_KO_Cp190_1_dm6_log.txt; do /data6/tools/MicMap-2.0.1357a2e-Release-Linux-x86_64/bin/sortCompressCall -d /data6/Maria/ChIPseq/GTL -r dm6 -D -S `basename $f _log.txt`; done
+ 7423  pwd
+ 7424  ls
+ 7425  ls -lt /tmp/|head
+ 7426  ls -lt /tmp/|head -20
+ 7427  vi /data6/tools/MicMap-2.0.1357a2e-Release-Linux-x86_64/bin/sortCompressCall
+ 7428  less /tmp/ChIPseqCTC_Cp190_KO_Cp190_1_dm6_chr1.vcf 
+ 7429  ls
+ 7430  mkdir VCF
+ 7431  mv /tmp/ChIPseqCTC_Cp190_KO_Cp190_1_dm6_chr*.vcf VCF
+ 7432  ls
+
+ 7597  cd /data6/Maria/ChIPseq/
+ 7598  ls
+ 7599  cd GTL/
+ 7600  ls
+ 7601  cat hist.txt 
+ 7602  for f in ChIPseqCTC_*_log.txt; do name=`basename $f _log.txt`; if [[ -s VCF/${name}_chr1.vcf ]]; then echo "$name already processed - skipping"; continue; fi; /data6/tools/MicMap-2.0.1357a2e-Release-Linux-x86_64/bin/sortCompressCall -d /data6/Maria/ChIPseq/GTL -r dm6 -D -S $name; mv /tmp/${name}_chr*.vcf VCF; done
+
+ 7625  cd /data6/Maria/ChIPseq/GTL/
+ 7626  ls
+ 7627  cd FQ/
+ 7628  ls
+ 7629  ls -alth
+ 7630  htop
+ 7631  ls -alth
+ 7632  pwd
+ 7633  vi ../getGenotype 
+ 7634  ls -alth
+ 7635  less ChIPseqCTC_CTCF_0_CTCF_2_R1.gt.txt 
+ 7636  ls
+ 7637  vi ../getGenotype 
+ 7638  ls
+ 7639  ls *.gt.txt
+ 7640  ls -lh *.gt.txt
+ 7641  rm *.gt.txt
+ 7642  ls
+ 7643  vi ../matchGenotype 
+ 7644  ls
+ 7645  vi ../matchGenotype 
+ 7646  perl -cw ../matchGenotype 
+ 7647  ls
+ 7648  ../matchGenotype 
+ 7649  ls -alth
+ 7650  less ChIPseqCTC_CTCF_OE_Cp190_2_R1.gt.txt 
+ 7651  ls -alth
+ 7652  pwd
+ 7653  cd ..
+ 7654  ls -alth
+ 7655  rm _raw.bam 
+ 7656  pwd
+ 7657  ls
+ 7658  ls -alth
+ 7659  java -Xmx16g -jar /software/UHTS/Analysis/picard-tools/2.18.11/bin/picard.jar ValidateSamFile I=ChIPseqCTC_Cp190_KO_Cp190_2.bam
+
+ 7789  cd /data6/Maria/ChIPseq/GTL/
+ 7790  ls
+ 7791  ls FQ
+ 7792  ls FQ/*.gz >>matchGenotype 
+ 7793  vi matchGenotype 
+ 7794  cd G
+ 7795  cd FQ/
+ 7796  ls
+ 7797  ls -l Cp190_KO_R*
+ 7798  less Cp190_KO_R2_AGTCTTT_1.gt.txt 
+ 7799  less Cp190_KO_R2_AGTCTTT_1.fastq.gz 
+ 7800  less Cp190_KO_R1_ATTCCGT_1.fastq.gz 
+ 7801  less Cp190_KO_R3_GCTACCT_1.fastq.gz 
+ 7802  ls
+ 7803  cd ..
+ 7804  ls
+ 7805  vi matchGenotype 
+ 7806  perl -cw matchGenotype 
+ 7807  ls FQ/
+ 7808  ./matchGenotype >allmatch.txt
+ 7809  vi matchGenotype 
+ 7810  ./matchGenotype >allmatch.txt
+ 7811  less allmatch.txt 
+ 7812  sed 's/ ([^)]*)//g' allmatch.txt >allmatch2.txt 
+ 7813  less allmatch2.txt 
+ 7814  pwd
+ 7815  ps -efH|grep chris
+ 7816  pwd
+ 7817  ls
+ 7818  du -sh .
+ 7819  ls FQ/
+ 7820  ls -lth FQ/|head
+ 7821  ./matchGenotype >allmatch.txt
+ 7822  sed 's/ ([^)]*)//g' allmatch.txt >allmatch2.txt 
+ 7823  pwd
+ 7824  ps -efH|grep chris
+ 7825  grep HIC9573 allmatch2.txt 
+ 7826  ls -l FQ/*HIC9573*
+ 7827  vi matchGenotype 
+ 7828  ls FQ/*.txt|wc -l
+ 7829  ls FQ
+ 7830  ./matchGenotype >allmatch.txt
+ 7831  vi matchGenotype 
+ 7832  perl -cw matchGenotype 
+ 7833  ./matchGenotype >allmatch.txt
+ 7834  vi matchGenotype 
+ 7835  perl -cw matchGenotype 
+ 7836  ./matchGenotype >allmatch.txt
+ 7837  sed 's/ ([^)]*)//g' allmatch.txt >allmatch2.txt 
+ 7838  ./matchGenotype >allmatch.txt
+ 7839  sed 's/ ([^)]*)//g' allmatch.txt >allmatch2.txt 
+ 7840  ls -alth
+ 7841  pwd
+ 7842  cd /data6/Maria/ChIPseq/
+ 7843  ls
+ 7844  ls GTL/
+ 7845  for f in GTL/*_log.txt; do n=`basename $f _dm6_log.txt`; echo "Processing sample $n"; l=`gzip -dc split/${n}_R1.fastq.gz | wc -l`; grep '^  *[1-9][0-9]* pairs$' $f; e=$((l/4)); echo "$e reads in fastq"; echo; done
+ 7846  cd split/
+ 7847  ls
+ 7848  mv ChIPseqCTC_CTCF_OE_CTCF_2_R1.fastq.gz a
+ 7849  mv ChIPseqCTC_CTCF_OE_CTCF_2_R2.fastq.gz b
+ 7850  mv ChIPseqCTC_WT_CTCF_2_R1.fastq.gz ChIPseqCTC_CTCF_OE_CTCF_2_R1.fastq.gz
+ 7851  mv ChIPseqCTC_WT_CTCF_2_R2.fastq.gz ChIPseqCTC_CTCF_OE_CTCF_2_R2.fastq.gz
+ 7852  mv a ChIPseqCTC_WT_CTCF_2_R1.fastq.gz
+ 7853  mv b ChIPseqCTC_WT_CTCF_2_R2.fastq.gz
+ 7854  ls
+ 7855  pwd
+ 7856  cd ..
+ 7857  ls -al
+ 7858  for f in GTL/*_log.txt; do n=`basename $f _dm6_log.txt`; echo "Processing sample $n"; l=`gzip -dc split/${n}_R1.fastq.gz | wc -l`; grep '^  *[1-9][0-9]* pairs$' $f; e=$((l/4)); echo "$e reads in fastq"; echo; done
+ 7859  ls
+ 7860  cd GTL/
+ 7861  ls
+ 7862  cd FQ/
+ 7863  ls
+ 7864  rm *.gt.txt
+ 7865  ls
+ 7866  less ../../WTL3CNS_A_L1_I1_001.fastq.gz 
+ 7867  less ../../WTL3CNS_A_L1_R1_001.fastq.gz 
+ 7868  less ../../WTL3CNS_A_L1_R2_001.fastq.gz 
+ 7869  less ../../WTL3CNS_A_L1_R3_001.fastq.gz 
+ 7870  ls
+ 7871  ln -s ../../WTL3CNS_?_L1_R[13]_001.fastq.gz .
+ 7872  ls
+ 7873  ln -s ../../../RNAseq/*.fastq.gz .
+ 7874  ls
+ 7875  ln -s ../../../FASTQ/[cw]*.fastq.gz .
+ 7876  ln -s ../../../HCC_MG/HIC9*.fastq.gz .
+ 7877  ls
+ 7878  cd ..
+ 7879  ls
+ 7880  vi getGenotype 
+ 7881  ./getGenotype 
+
+ 8344  cd /data6/dm6/
+ 8345  ls
+ 8346  ls DNA/
+ 8347  ~/src/MICMAP/GTLfetch 
+ 8348  cat dm6.cfg 
+ 8349  head /tmp/chipseq_CTCF_binding_regions_without_motif.tsv 
+ 8350  ~/src/MICMAP/GTLfetch -C 1 -P 21331..21710
+ 8351  ~/src/MICMAP/GTLfetch -g /data6/dm6/dm6.bin -C 1 -P 21331..21710
+ 8352  history |tail -20 >tsv2fa
+ 8353  head /tmp/chipseq_CTCF_binding_regions_without_motif.tsv >>tsv2fa 
+ 8354  head /tmp/chipseq_CTCF_binding_regions_without_motif.tsv /data6/dm6/dm6.cfg >>tsv2fa 
+ 8355  vi tsv2fa 
+ 8356  chmod +x tsv2fa 
+ 8357  vi tsv2fa 
+ 8358  /data6/tools/bin/GTLfetch 
+ 8359  vi tsv2fa 
+ 8360  perl -cw tsv2fa 
+ 8361  vi tsv2fa 
+ 8362  ./tsv2fa /tmp/chipseq_CTCF_binding_regions_without_motif.tsv dm6 | head
+ 8363  vi tsv2fa 
+ 8364  ./tsv2fa /tmp/chipseq_CTCF_binding_regions_without_motif.tsv dm6 | head
+ 8365  less /tmp/chipseq_CTCF_binding_regions_without_motif.tsv
+ 8366  vi tsv2fa 
+ 8367  ./tsv2fa /tmp/chipseq_CTCF_binding_regions_without_motif.tsv dm6 | head
+ 8368  ./tsv2fa /tmp/chipseq_CTCF_binding_regions_without_motif.tsv dm6 >/tmp/chipseq_CTCF_binding_regions_without_motif.fa
+ 8369  pwd
+ 8370  vi tsv2fa 
+ 8371  cd src/psc/
+ 8372  find . -name \*.R
+ 8373  cd labnotes/GC/
+ 8374  vi plotGeneCov.R 
+
+ 8792  cd /data6/Maria/RNAseq/
+ 8793  df -h .
+ 8794  ls -alth
+ 8795  less ctcf0r1_counts.txt 
+ 8796  ls
+ 8797  vi RNAgtl2bam
+ 8798  ls
+ 8799  cat RNAgtl2bam2 
+ 8800  ls
+ 8801  ls *.sam
+ 8802  ls *.txt.gz
+ 8803  ln MAP.txt.gz MAP2.txt.gz 
+ 8804  ln w1118r2_dm6_all_raw.txt.gz w1118r2_dm6_all_raw2.txt.gz
+ 8805  htop
+ 8806  ls *.sam
+ 8807  ln w1118r2_dm6.sam w1118r2_dm62.sam
+ 8808  ls -alth|head
+ 8809  ls
+ 8810  ls *.sam
+ 8811  head -9136364 w1118r2_dm62.sam |tail
+ 8812  head -9136366 w1118r2_dm62.sam |tail
+ 8813  cat RNAgtl2bam2 
+ 8814  wc -l /data6/dm6/header_dm6_withChr 
+ 8815  head -9136354 w1118r2_dm62.sam |tail
+ 8816  ls
+ 8817  ls -alth|head -20
+ 8818  zgrep 00004554392:BVLDANXX:8:2115:11065:54888 w1118r2_dm6_all_raw2.txt.gz 
+ 8819  gzip -dc w1118r2_dm6_all_raw2.txt.gz|head
+ 8820  zgrep ^4554392 w1118r2_dm6_all_raw2.txt.gz
+ 8821  ls /data6/tyto/busco/
+ 8822  ls
+ 8823  vi tromer2sam 
+ 8824  ls *.sam
+ 8825  less w1118r2_dm62.sam 
+ 8826  samtools
+ 8827  samtools flags
+ 8828  samtools flags 77
+ 8829  samtools flags 141
+ 8830  vi tromer2sam 
+ 8831  cat RNAgtl2bam2 
+ 8832  ls -alth|head -20
+ 8833  ./tromer2sam w1118r2_dm6_all_raw2.txt.gz MAP.txt.gz >new.sam
+ 8834  rm new.sam 
+ 8835  samtools view -bS <(cat /data6/dm6/header_dm6_withChr; ./tromer2sam w1118r2_dm6_all_raw2.txt.gz MAP.txt.gz) >new.bam
+ 8836  samtools sort -T bam.sort -m 2g -@24 -o news.bam new.bam
+ 8837  ls -alth|head -20
+ 8838  ls -alth
+ 8839  ls -l *_log.txt
+ 8840  rm *_log.txt
+ 8841  ls -l *.bam
+ 8842  rm *.bam
+ 8843  ls -l *.bai
+ 8844  rm *.bai
+ 8845  ls
+ 8846  rm *_counts.err
+ 8847  rm *_counts.txt
+ 8848  ls
+ 8849  rm log 
+ 8850  ls -alth
+ 8851  ls -l w1118r3_dm6.sam w1118r3_dm6_all_raw.txt.gz MAP.txt.gz w1118r2_dm62.sam w1118r2_dm6_all_raw2.txt.gz MAP2.txt.gz
+ 8852  rm w1118r3_dm6.sam w1118r3_dm6_all_raw.txt.gz MAP.txt.gz w1118r2_dm62.sam w1118r2_dm6_all_raw2.txt.gz MAP2.txt.gz
+ 8853  ls
+ 8854  less d1.txt 
+ 8855  rm d1.txt 
+ 8856  ls
+ 8857  less norm_summary.txt 
+ 8858  rm norm_summary.txt 
+ 8859  ls
+ 8860  less counts_summary.txt 
+ 8861  rm counts_summary.txt 
+ 8862  ls
+ 8863  vi RNAgtl2bam2 
+ 8864  diff -u RNAgtl2bam RNAgtl2bam2 
+ 8865  diff -u RNAgtl2bam RNAgtl2bam2 |head -20
+ 8866  vi RNAgtl2bam
+ 8867  diff -u RNAgtl2bam RNAgtl2bam2 |head -20
+ 8868  vi RNAgtl2bam
+ 8869  diff -u RNAgtl2bam RNAgtl2bam2 |head -20
+ 8870  vi RNAgtl2bam
+ 8871  diff -u RNAgtl2bam RNAgtl2bam2 |head -20
+ 8872  ls *.fastq.gz
+ 8873  cat RNAgtl2bam >>RNAgtl2bam2 
+ 8874  mv RNAgtl2bam RNAgtl2bam.bak
+ 8875  mv RNAgtl2bam2 RNAgtl2bam
+ 8876  vi RNAgtl2bam
+ 8877  vi /data6/tools/MicMap-2.0.89ddb54-Release-Linux-x86_64/bin/sortCompressCall 
+ 8878  vi RNAgtl2bam
+ 8879  vi /data6/tools/MicMap-2.0.89ddb54-Release-Linux-x86_64/bin/sortCompressCall 
+ 8880  vi RNAgtl2bam
+ 8881  vi /data6/tools/MicMap-2.0.89ddb54-Release-Linux-x86_64/bin/sortCompressCall 
+ 8882  vi RNAgtl2bam
+ 8883  man [[
+ 8884  man bash
+ 8885  vi RNAgtl2bam
+ 8886  /data6/tools/MicMap-2.0.89ddb54-Release-Linux-x86_64/bin/MicMap2 
+ 8887  vi /data6/branches/CMAKE/src/MICMAP2/main.c 
+ 8888  vi RNAgtl2bam
+ 8889  ls
+ 8890  ./RNAgtl2bam
+ 8891  vi RNAgtl2bam
+ 8892  ls
+ 8893  rm Cp190_KO_R1_dm6.raw.bam 
+ 8894  ls -alth|head
+ 8895  less Cp190_KO_R1_counts.err 
+ 8896  ls -alth|head
+ 8897  tail -f Cp190_KO_R1_counts.err 
+ 8898  ls -alth|head
+ 8899  jobs
+ 8900  kill %1
+ 8901  ./RNAgtl2bam
+ 8902  ls
+ 8903  vi RNAgtl2bam
+ 8904  htop
+ 8905  ls
+ 8906  rm unassigned_R*
+ 8907  ls
+ 8908  vi RNAgtl2bam
+ 8909  ls -alth|head
+ 8910  vi RNAgtl2bam
+ 8911  ./RNAgtl2bam
+ 8912  jobs
+ 8913  kill %1
+ 8914  ls
+ 8915  rm w1118r3_counts.*
+ 8916  rm w1118r3_dm6*
+ 8917  vi RNAgtl2bam
+ 8918  ./RNAgtl2bam
+ 8919  df -h
+ 8920  ls
+ 8921  cat RNAgtl2bam
+ 8922  ls -alth|head
+ 8923  ls
+ 8924  rm cpu*.rslts
+ 8925  rm log
+ 8926  rm w1118r3_dm6_all_raw.txt.gz MAP.txt.gz
+ 8927  ls -alth|head
+ 8928  vi RNAgtl2bam
+ 8929  ls
+ 8930  vi RNAgtl2bam
+ 8931  ./RNAgtl2bam
+ 8932  vi RNAgtl2bam
+ 8933  htop
+ 8934  ls
+ 8935  pwd
+ 8936  less htseqcounts_l.sh 
+ 8937  ls -l virus_match_AVX512 
+ 8938  ./virus_match_AVX512 --help
+ 8939  ls -alth|head
+ 8940  pwd
+ 8941  cd ..
+ 8942  ls
+ 8943  cd ChIPseq/
+ 8944  ls
+ 8945  ls GTL/
+ 8946  cd GTL/
+ 8947  vi genBam 
+ 8948  less -S /home/nguex/GOUDET/ctg0.txt
+ 8949  telnet bionano 3005
+ 8950  telnet bionano 80
+ 8951  ssh bionano
+ 8952  telnet bionano 3005
+ 8953  pwd
+ 8954  cd /data6/Maria/
+ 8955  ls
+ 8956  cd RNAseq/
+ 8957  ls
+ 8958  vi tromer2sam 
+ 8959  ls
+ 8960  vi RNAgtl2bam 
+ 8961  ls
+ 8962  df -h
+ 8963  ls /mnt/chris/FAC/FBM/CIG/mgambett/default/
+ 8964  df -h
+ 8965  ls /mnt/jdorier/FAC/FBM/CIG/mgambett/
+ 8966  ls /mnt/jdorier/FAC/FBM/CIG/mgambett/ctcf_hic/
+ 8967  ls /mnt/jdorier/FAC/FBM/CIG/mgambett/default/
+ 8968  pwd
+ 8969  ls /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/2018.02\ CTCF\ L3\ brains/
+ 8970  ls /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/2018.02\ CTCF\ L3\ brains/FASTQ/
+ 8971  ln -s /mnt/chris/FAC/FBM/CIG/mgambett/ctcf_hic/D2c/2018.02\ CTCF\ L3\ brains/FASTQ/*.gz .
+ 8972  ls
+ 8973  cp RNAgtl2bam RNAgtl2bam2
+ 8974  vi RNAgtl2bam2 
+ 8975  ls
+ 8976  ls *_R[12]_*
+ 8977  ls *_R2_*
+ 8978  ls *_R2_*.fastq.gz
+ 8979  ls *_R2_00*.fastq.gz
+ 8980  lsl
+ 8981  ls *_R2_00*.fastq.gz >>RNAgtl2bam2
+ 8982  vi RNAgtl2bam2 
+ 8983  ls /data6/tools/MicMap-1.0.f831d83-RelWithDebInfo-Linux-x86_64/bin
+ 8984  ls /data6/tools/MicMap-2.0.89ddb54-Release-Linux-x86_64/
+ 8985  vi RNAgtl2bam2 
+ 8986  ./virus_match_AVX512 
+ 8987  vi RNAgtl2bam2 
+ 8988  ./RNAgtl2bam2 
+ 8989  vi RNAgtl2bam2 
+ 8990  ls -l /var/lib/hugetlbfs/global/pagesize-1GB/
+ 8991  ls -al /var/lib/hugetlbfs/global/pagesize-1GB/
+ 8992  mount|grep huge
+ 8993  ./RNAgtl2bam2 
+ 8994  ls -al /var/lib/hugetlbfs/global/pagesize-1GB/
+ 8995  ./RNAgtl2bam2 
+ 8996  vi RNAgtl2bam2 
+ 8997  ./RNAgtl2bam2 
+ 8998  vi RNAgtl2bam2 
+ 8999  ./RNAgtl2bam2 
+ 9000  ls
+ 9001  rm cpu*.rslts
+ 9002  ls
+ 9003  vi RNAgtl2bam
+ 9004  ls
+ 9005  ls -alth
+ 9006  rm \(null\)_log.txt 
+ 9007  vi RNAgtl2bam
