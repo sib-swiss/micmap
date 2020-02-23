@@ -1772,6 +1772,13 @@ print_pair_SAM_m(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 {
 	for (unsigned int j = 0; j < tpp->nbMatches; j++)
 	{
+		// FIXME - could be better handled
+		if (gFilterSAM
+		    && (tpp->ppd[j][i].tag1pos == 0
+						|| tpp->ppd[j][i].tag1pos + dpp->taglen1 >= virtchr[dpp->chr[j]].len
+						|| tpp->ppd[j][i].tag1pos + dpp->delta[j] <= 0
+				    || tpp->ppd[j][i].tag1pos + dpp->delta[j] + dpp->taglen2 >= virtchr[dpp->chr[j]].len))
+			continue;
 		printf("%.*s\t%d\t%s\t%d\t%d\t%dM\t=\t%d\t%d\t%.*s\t%.*s\n",
 					 dpp->hhlen1 - 1, dpp->hdr1 + 1,
 					 dpp->flag1[j],
@@ -1836,7 +1843,9 @@ print_pair_SAM_g(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 	{
 		// FIXME - should compute total of deletions instead of just using 255 as a safety margin...
 		if (gFilterSAM
-		    && (tpp->ppd[j][i].tag1pos + dpp->taglen1 + 255 >= virtchr[dpp->chr[j]].len
+		    && (tpp->ppd[j][i].tag1pos == 0
+						|| tpp->ppd[j][i].tag1pos + dpp->taglen1 + 255 >= virtchr[dpp->chr[j]].len
+						|| tpp->ppd[j][i].tag1pos + dpp->delta[j] <= 0
 				    || tpp->ppd[j][i].tag1pos + dpp->delta[j] + dpp->taglen2 + 255 >= virtchr[dpp->chr[j]].len))
 			continue;
 		// get the cigar strings if they exist
@@ -1962,6 +1971,11 @@ print_pair_SAM_u(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 			char cigar1[8],cigar2[8];
 			unsigned int chr1 = GET_TAG1_CHR(tpp->pcpd[j][i].chr);
 			unsigned int chr2 = GET_TAG2_CHR(tpp->pcpd[j][i].chr);
+			// FIXME - do not output those 0 coordinates... could use a better fix
+			if (gFilterSAM
+					&& ((chr1 != 0 && (tpp->pcpd[j][i].tag1pos == 0 || tpp->pcpd[j][i].tag1pos + dpp->taglen1 >= virtchr[chr1].len))
+							|| (chr2 != 0 && (tpp->pcpd[j][i].tag2pos == 0 || tpp->pcpd[j][i].tag2pos + dpp->taglen2 >= virtchr[chr2].len))))
+				continue;
 			if (chr1 != 0)
 				snprintf(cigar1,8,"%dM",dpp->taglen1);
 			else
@@ -1975,7 +1989,7 @@ print_pair_SAM_u(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 						 dpp->flag1[j],
 						 chr1 == 0 ? "*" : virtchr[chr1].SAMname,
 						 tpp->pcpd[j][i].tag1pos,
-						 254 * (dpp->taglen1 - dpp->nbMismatch1) / dpp->taglen1,
+						 chr1 == 0 ? 0 : 254 * (dpp->taglen1 - dpp->nbMismatch1) / dpp->taglen1,
 						 cigar1,
 						 chr2 == 0 ? "*" : virtchr[chr2].SAMname,
 						 tpp->pcpd[j][i].tag2pos,
@@ -1987,7 +2001,7 @@ print_pair_SAM_u(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 						 dpp->flag2[j],
 						 chr2 == 0 ? "*" : virtchr[chr2].SAMname,
 						 tpp->pcpd[j][i].tag2pos,
-						 254 * (dpp->taglen2 - dpp->nbMismatch2) / dpp->taglen2,
+						 chr2 == 0 ? 0 : 254 * (dpp->taglen2 - dpp->nbMismatch2) / dpp->taglen2,
 						 cigar2,
 						 chr1 == 0 ? "*" : virtchr[chr1].SAMname,
 						 tpp->pcpd[j][i].tag1pos,
