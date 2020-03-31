@@ -155,7 +155,7 @@ while ( <FD> ) {
     $Rev2 = $rev2;
     my $MM0 = <FD>; #READ1 END ; READ2 END
     if (defined($debug) or not defined($T[$ord])) {
-      if (($noHalf != 0 and $chr1 != $chr2) or $tag1pos + length($Read1) >= $L[$chr1] or $tag2pos + length($Read2) >= $L[$chr2]) {
+      if (($noHalf != 0 and $chr1 != $chr2) or $tag1pos == 0 or $tag2pos == 0 or $tag1pos + length($Read1) >= $L[$chr1] or $tag2pos + length($Read2) >= $L[$chr2]) {
 	# fixmate does not tolerate chimeras...
 	printf "%s\t77\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head1, $Read1, $Qual1;
 	printf "%s\t141\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head2, $Read2, $Qual2;
@@ -312,17 +312,19 @@ while ( <FD> ) {
     $Rev1 = $rev1;
     $Rev2 = $rev2;
     my $MM0 = <FD>; #READ1 62 A END ; READ2 31 N 32 N 52 N 53 N 64 N 65 N END
-    my ($cig1, $cig2, $lc1, $lc2) = &readCigar;
+    my ($cig1, $cig2, $lc1, $lc2, $lr1, $lr2) = &readCigar;
     if (defined($debug) or not defined($T[$ord])) {
       if ($cig1 eq "") {
 	$lc1 = $Len1;
+	$lr1 = $Len1;
 	$cig1 = sprintf "%uM", $Len1;
       }
       if ($cig2 eq "") {
 	$lc2 = $Len2;
+	$lr2 = $Len2;
 	$cig2 = sprintf "%uM", $Len2;
       }
-      if ($tag1pos + $delta < 0 or $tag1pos + $lc1 >= $chrLen or $tag1pos + $delta + $lc2 >= $chrLen) {
+      if ($tag1pos + $delta < 0 or $tag1pos + $lc1 >= $chrLen or $tag1pos + $delta + $lc2 >= $chrLen or $lr1 != $Len1 or $lr2 != $Len2) {
         # Mate is at a negative coordinate... make the pair unmapped for now
 	printf "%s\t77\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head1, $Read1, $Qual1;
 	printf "%s\t141\t*\t0\t0\t*\t*\t0\t0\t%s\t%s\n", $Head2, $Read2, $Qual2;
@@ -396,17 +398,19 @@ while ( <FD> ) {
       ($flag1, $flag2, $ilen, $chrSAM, $chrLen) = &readSAMflags;
       ($tag1pos, $tag2offset, $delta, $rev1, $rev2, $chr2) = &readPP;
       my $MM1 = <FD>; #READ1 62 A END ; READ2 31 N 32 N 52 N 53 N 64 N 65 N END
-      ($cig1, $cig2, $lc1, $lc2) = &readCigar;
+      ($cig1, $cig2, $lc1, $lc2, $lr1, $lr2) = &readCigar;
       if (defined($debug) or not defined($T[$ord])) {
 	if ($cig1 eq "") {
 	  $lc1 = $Len1;
+	  $lr1 = $Len1;
 	  $cig1 = sprintf "%uM", $Len1;
 	}
 	if ($cig2 eq "") {
 	  $lc2 = $Len2;
+	  $lr2 = $Len2;
 	  $cig2 = sprintf "%uM", $Len2;
 	}
-	if ($tag1pos == 0 or $tag1pos + $delta <= 0 or $tag1pos + $lc1 >= $chrLen or $tag1pos + $delta + $lc2 >= $chrLen) {
+	if ($tag1pos == 0 or $tag1pos + $delta <= 0 or $tag1pos + $lc1 >= $chrLen or $tag1pos + $delta + $lc2 >= $chrLen or $lr1 != $Len1 or $lr2 != $Len2) {
 	  # Read pos is 0 or mate is at zero or a negative coordinate... make the pair unmapped for now
 	  # Since this is the second match... just print nothing
 	} else {
@@ -566,22 +570,26 @@ sub readCigar {
   my $CIG = <FD>; #READ1 END ; READ2 56M 110D 20M END
   my ($c1, $c2) = $CIG =~ /^\d+ CIG\d+ READ1 ([^;]*)END ; READ2 (.*)END/;
   my $l1 = 0;
+  my $lr1 = 0;
   my @F = split / /, $c1;
   foreach my $e (@F) {
     my $v = $e;
     my $c = chop $v;
     $l1 += $v if $c =~ /^[DMNS]$/;
+    $lr1 += $v if $c =~ /^[IMS]$/;
   }
   $c1 = join "", @F;
   my $l2 = 0;
+  my $lr2 = 0;
   @F = split / /, $c2;
   foreach my $e (@F) {
     my $v = $e;
     my $c = chop $v;
     $l2 += $v if $c =~ /^[DMNS]$/;
+    $lr2 += $v if $c =~ /^[IMS]$/;
   }
   $c2 = join "", @F;
-  return ($c1, $c2, $l1, $l2);
+  return ($c1, $c2, $l1, $l2, $lr1, $lr2);
 }
 
 sub rtogP {
