@@ -1737,8 +1737,11 @@ print_pair_SAM_p(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 {
 	for (unsigned int j = 0; j < tpp->nbMatches; j++)
 	{
+		// FIXME - could be better handled
 		if (gFilterSAM
-		    && (tpp->ppd[j][i].tag1pos + dpp->taglen1 >= virtchr[dpp->chr[j]].len
+		    && ((int)(tpp->ppd[j][i].tag1pos) <= 0
+				    || tpp->ppd[j][i].tag1pos + dpp->taglen1 >= virtchr[dpp->chr[j]].len
+				    || (int)(tpp->ppd[j][i].tag1pos + dpp->delta[j]) <= 0
 				    || tpp->ppd[j][i].tag1pos + dpp->delta[j] + dpp->taglen2 >= virtchr[dpp->chr[j]].len))
 			continue;
 		printf("%.*s\t%d\t%s\t%d\t%d\t%dM\t=\t%d\t%d\t%.*s\t%.*s\n",
@@ -1774,9 +1777,9 @@ print_pair_SAM_m(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 	{
 		// FIXME - could be better handled
 		if (gFilterSAM
-		    && (tpp->ppd[j][i].tag1pos == 0
-						|| tpp->ppd[j][i].tag1pos + dpp->taglen1 >= virtchr[dpp->chr[j]].len
-						|| tpp->ppd[j][i].tag1pos + dpp->delta[j] <= 0
+		    && ((int)(tpp->ppd[j][i].tag1pos) <= 0
+				    || tpp->ppd[j][i].tag1pos + dpp->taglen1 >= virtchr[dpp->chr[j]].len
+				    || (int)(tpp->ppd[j][i].tag1pos + dpp->delta[j]) <= 0
 				    || tpp->ppd[j][i].tag1pos + dpp->delta[j] + dpp->taglen2 >= virtchr[dpp->chr[j]].len))
 			continue;
 		printf("%.*s\t%d\t%s\t%d\t%d\t%dM\t=\t%d\t%d\t%.*s\t%.*s\n",
@@ -1810,6 +1813,13 @@ print_pair_SAM_mN(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 {
 	for (unsigned int j = 0; j < tpp->nbMatches; j++)
 	{
+		// FIXME - could be better handled
+		if (gFilterSAM
+		    && ((int)(tpp->ppd[j][i].tag1pos) <= 0
+				    || tpp->ppd[j][i].tag1pos + dpp->taglen1 >= virtchr[dpp->chr[j]].len
+				    || (int)(tpp->ppd[j][i].tag1pos + dpp->delta[j]) <= 0
+				    || tpp->ppd[j][i].tag1pos + dpp->delta[j] + dpp->taglen2 >= virtchr[dpp->chr[j]].len))
+			continue;
 		printf("%.*s\t%d\t%s\t%d\t%d\t%dM\t=\t%d\t%d\t%.*s\t%.*s\n",
 					 dpp->hhlen1 - 1, dpp->hdr1 + 1,
 					 dpp->flag1[j],
@@ -1843,9 +1853,9 @@ print_pair_SAM_g(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 	{
 		// FIXME - should compute total of deletions instead of just using 255 as a safety margin...
 		if (gFilterSAM
-		    && (tpp->ppd[j][i].tag1pos == 0
+		    && ((int)(tpp->ppd[j][i].tag1pos) <= 0
 						|| tpp->ppd[j][i].tag1pos + dpp->taglen1 + 255 >= virtchr[dpp->chr[j]].len
-						|| tpp->ppd[j][i].tag1pos + dpp->delta[j] <= 0
+						|| (int)(tpp->ppd[j][i].tag1pos + dpp->delta[j]) <= 0
 				    || tpp->ppd[j][i].tag1pos + dpp->delta[j] + dpp->taglen2 + 255 >= virtchr[dpp->chr[j]].len))
 			continue;
 		// get the cigar strings if they exist
