@@ -496,9 +496,9 @@ decodePair(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp, int bamStyle)
 			dpp->chr[j] = tpp->header.chr;
 
 		if (dpp->delta[j] >= 0) {
-			dpp->ilen[j] = dpp->delta[j] + dpp->taglen2 - 1;
+			dpp->ilen[j] = dpp->delta[j] + dpp->taglen2;
 		} else {
-			dpp->ilen[j] = dpp->delta[j] - dpp->taglen1 + 1;
+			dpp->ilen[j] = dpp->delta[j] - dpp->taglen1;
 		}
 		if (dpp->reverseTAG1[j]) // reverse
 		{
@@ -1851,18 +1851,16 @@ print_pair_SAM_g(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 {
 	for (unsigned int j = 0; j < tpp->nbMatches; j++)
 	{
-		// FIXME - should compute total of deletions instead of just using 255 as a safety margin...
-		if (gFilterSAM
-		    && ((int)(tpp->ppd[j][i].tag1pos) <= 0
-						|| tpp->ppd[j][i].tag1pos + dpp->taglen1 + 255 >= virtchr[dpp->chr[j]].len
-						|| (int)(tpp->ppd[j][i].tag1pos + dpp->delta[j]) <= 0
-				    || tpp->ppd[j][i].tag1pos + dpp->delta[j] + dpp->taglen2 + 255 >= virtchr[dpp->chr[j]].len))
-			continue;
-		// get the cigar strings if they exist
+		// get the cigar strings if they exist - or make them
 		unsigned int cigarpos_l = dpp->cigarposStart[j];
+		char CigarString1[2048];
+		char CigarString2[2048];
+		int tag1pos = tpp->ppd[j][i].tag1pos;
+		int tag2pos = tpp->ppd[j][i].tag1pos + dpp->delta[j];
+		int tag1len = 0;
+		int tag2len = 0;
 		if (tpp->cigar[j][cigarpos_l] != kCIGARTERMINATOR)	// if not, normal decoding.
 		{
-			char CigarString[2048];
 			int cl = 0;
 			// FIXME - probably not the right place for this, but for the time being... hack for correct output length
 			int total = 0;
@@ -1870,42 +1868,27 @@ print_pair_SAM_g(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 			{
 				int pos = tpp->cigar[j][cigarpos_l++];
 				char code = tpp->cigar[j][cigarpos_l++];
+				if (cl == 0 && code == 'S')
+					tag1pos += pos; // skip S
+				if (code == 'D' || code == 'M')
+					tag1len += pos; // apparent segment length
 				if (code != 'D')
 					total += pos;
 				if (tpp->cigar[j][cigarpos_l] == kCIGARTERMINATOR && total < dpp->taglen1) {
-					fprintf(stderr, "cigar is too short at %.*s : %s%d%c vs %d\n", dpp->hhlen1 - 1, dpp->hdr1 + 1, CigarString, pos,code, dpp->taglen1);
+					fprintf(stderr, "cigar is too short at %.*s : %s%d%c vs %d\n", dpp->hhlen1 - 1, dpp->hdr1 + 1, CigarString1, pos,code, dpp->taglen1);
 					pos += dpp->taglen1 - total;
 				}
-				cl += sprintf(&CigarString[cl],"%d%c",pos,code);
+				cl += sprintf(&CigarString1[cl],"%d%c",pos,code);
 			}
-			printf("%.*s\t%d\t%s\t%d\t%d\t%s\t=\t%d\t%d\t%.*s\t%.*s\n",
-						 dpp->hhlen1 - 1, dpp->hdr1 + 1,
-						 dpp->flag1[j],
-						 virtchr[dpp->chr[j]].SAMname,
-						 tpp->ppd[j][i].tag1pos,
-						 254 * (dpp->taglen1 - dpp->nbMismatch1) / dpp->taglen1,
-						 CigarString,
-						 tpp->ppd[j][i].tag1pos + dpp->delta[j],
-						 dpp->ilen[j],
-						 dpp->taglen1, dpp->tag1,
-						 dpp->taglen1, dpp->qual1);
 		}
 		else
-			printf("%.*s\t%d\t%s\t%d\t%d\t%dM\t=\t%d\t%d\t%.*s\t%.*s\n",
-						 dpp->hhlen1 - 1, dpp->hdr1 + 1,
-						 dpp->flag1[j],
-						 virtchr[dpp->chr[j]].SAMname,
-						 tpp->ppd[j][i].tag1pos,
-						 254 * (dpp->taglen1 - dpp->nbMismatch1) / dpp->taglen1,
-						 dpp->taglen1,
-						 tpp->ppd[j][i].tag1pos + dpp->delta[j],
-						 dpp->ilen[j],
-						 dpp->taglen1, dpp->tag1,
-						 dpp->taglen1, dpp->qual1);
+		{
+			sprintf(CigarString1,"%dM",dpp->taglen1);
+			tag1len = dpp->taglen1;
+		}
 		cigarpos_l += 1;
 		if (tpp->cigar[j][cigarpos_l] != kCIGARTERMINATOR)	// if not, normal decoding.
 		{
-			char CigarString[2048];
 			int cl = 0;
 			// FIXME - probably not the right place for this, but for the time being... hack for correct output length
 			int total = 0;
@@ -1913,38 +1896,58 @@ print_pair_SAM_g(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 			{
 				int pos = tpp->cigar[j][cigarpos_l++];
 				char code = tpp->cigar[j][cigarpos_l++];
+				if (cl == 0 && code == 'S')
+					tag2pos += pos; // skip S
+				if (code == 'D' || code == 'M')
+					tag2len += pos; // apparent segment length
 				if (code != 'D')
 					total += pos;
 				if (tpp->cigar[j][cigarpos_l] == kCIGARTERMINATOR && total < dpp->taglen2) {
-					fprintf(stderr, "cigar is too short at %.*s : %s%d%c vs %d\n", dpp->hhlen2 - 1, dpp->hdr2 + 1, CigarString, pos,code, dpp->taglen2);
+					fprintf(stderr, "cigar is too short at %.*s : %s%d%c vs %d\n", dpp->hhlen2 - 1, dpp->hdr2 + 1, CigarString2, pos,code, dpp->taglen2);
 					pos += dpp->taglen2 - total;
 				}
-				cl += sprintf(&CigarString[cl],"%d%c",pos,code);
+				cl += sprintf(&CigarString2[cl],"%d%c",pos,code);
 			}
-			printf("%.*s\t%d\t%s\t%d\t%d\t%s\t=\t%d\t%d\t%.*s\t%.*s\n",
-						 dpp->hhlen2 - 1, dpp->hdr2 + 1,
-						 dpp->flag2[j],
-						 virtchr[dpp->chr[j]].SAMname,
-						 tpp->ppd[j][i].tag1pos + dpp->delta[j],
-						 254 * (dpp->taglen2 - dpp->nbMismatch2) / dpp->taglen2,
-						 CigarString,
-						 tpp->ppd[j][i].tag1pos,
-						 - dpp->ilen[j],
-						 dpp->taglen2, dpp->tag2,
-						 dpp->taglen2, dpp->qual2);
 		}
 		else
-			printf("%.*s\t%d\t%s\t%d\t%d\t%dM\t=\t%d\t%d\t%.*s\t%.*s\n",
-						 dpp->hhlen2 - 1, dpp->hdr2 + 1,
-						 dpp->flag2[j],
-						 virtchr[dpp->chr[j]].SAMname,
-						 tpp->ppd[j][i].tag1pos + dpp->delta[j],
-						 254 * (dpp->taglen2 - dpp->nbMismatch2) / dpp->taglen2,
-						 dpp->taglen2,
-						 tpp->ppd[j][i].tag1pos,
-						 - dpp->ilen[j],
-						 dpp->taglen2, dpp->tag2,
-						 dpp->taglen2, dpp->qual2);
+		{
+			sprintf(CigarString2,"%dM",dpp->taglen2);
+			tag2len = dpp->taglen2;
+		}
+		int ilen;
+		if (tag1pos <= tag2pos)
+			ilen = tag2pos + tag2len - tag1pos;
+		else
+			ilen = - (tag1pos + tag1len - tag2pos);
+		// FIXME - should compute total of deletions instead of just using 255 as a safety margin...
+		if (gFilterSAM
+		    && (tag1pos <= 0
+						|| tag1pos + tag1len >= virtchr[dpp->chr[j]].len
+						|| tag2pos <= 0
+				    || tag2pos + tag2len >= virtchr[dpp->chr[j]].len))
+			continue;
+		printf("%.*s\t%d\t%s\t%d\t%d\t%s\t=\t%d\t%d\t%.*s\t%.*s\n",
+					 dpp->hhlen1 - 1, dpp->hdr1 + 1,
+					 dpp->flag1[j],
+					 virtchr[dpp->chr[j]].SAMname,
+					 tag1pos,
+					 254 * (dpp->taglen1 - dpp->nbMismatch1) / dpp->taglen1,
+					 CigarString1,
+					 tag2pos,
+					 ilen,
+					 dpp->taglen1, dpp->tag1,
+					 dpp->taglen1, dpp->qual1);
+		printf("%.*s\t%d\t%s\t%d\t%d\t%s\t=\t%d\t%d\t%.*s\t%.*s\n",
+					 dpp->hhlen2 - 1, dpp->hdr2 + 1,
+					 dpp->flag2[j],
+					 virtchr[dpp->chr[j]].SAMname,
+					 tag2pos,
+					 254 * (dpp->taglen2 - dpp->nbMismatch2) / dpp->taglen2,
+					 CigarString2,
+					 tag1pos,
+					 - ilen,
+					 dpp->taglen2, dpp->tag2,
+					 dpp->taglen2, dpp->qual2);
 	}
 }
 //---------------------------------------------------------------
@@ -1994,7 +1997,7 @@ print_pair_SAM_u(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 				snprintf(cigar2,8,"%dM",dpp->taglen2);
 			else
 				strcpy(cigar2,"*");
-			printf("%.*s\t%d\t%s\t%d\t%d\t%s\t%s\t%d\t%d\t%.*s\t%.*s\n",
+			printf("%.*s\t%d\t%s\t%d\t%d\t%s\t%s\t%d\t0\t%.*s\t%.*s\n",
 						 dpp->hhlen1 - 1, dpp->hdr1 + 1,
 						 dpp->flag1[j],
 						 chr1 == 0 ? "*" : virtchr[chr1].SAMname,
@@ -2003,10 +2006,9 @@ print_pair_SAM_u(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 						 cigar1,
 						 chr2 == 0 ? "*" : virtchr[chr2].SAMname,
 						 tpp->pcpd[j][i].tag2pos,
-						 dpp->ilen[j],
 						 dpp->taglen1, dpp->tag1,
 						 dpp->taglen1, dpp->qual1);
-			printf("%.*s\t%d\t%s\t%d\t%d\t%s\t%s\t%d\t%d\t%.*s\t%.*s\n",
+			printf("%.*s\t%d\t%s\t%d\t%d\t%s\t%s\t%d\t0\t%.*s\t%.*s\n",
 						 dpp->hhlen2 - 1, dpp->hdr2 + 1,
 						 dpp->flag2[j],
 						 chr2 == 0 ? "*" : virtchr[chr2].SAMname,
@@ -2015,7 +2017,6 @@ print_pair_SAM_u(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 						 cigar2,
 						 chr1 == 0 ? "*" : virtchr[chr1].SAMname,
 						 tpp->pcpd[j][i].tag1pos,
-						 dpp->ilen[j],
 						 dpp->taglen2, dpp->tag2,
 						 dpp->taglen2, dpp->qual2);
 		}
