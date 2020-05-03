@@ -5,7 +5,8 @@
 ## License
 
     Copyright (C) SIB  - Swiss Institute of Bioinformatics,   2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
-    Copyright (C) UNIL - University of Lausanne, Switzerland       2019 Nicolas Guex and Christian Iseli
+    Copyright (C) UNIL - University of Lausanne, Switzerland  2019-2020 Nicolas Guex and Christian Iseli
+    Copyright (C) EPFL - EPFL, Lausanne, Switzerland               2020 Christian Iseli
 
 
     This program is free software: you can redistribute it and/or modify
@@ -25,7 +26,7 @@
 ## Authors
 
 	Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
-	Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+	Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@epfl.ch
 	Repository: https://github.com/sib-swiss/micmap
 
 ## Info

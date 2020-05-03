@@ -16,6 +16,12 @@ TARGET_LINK_LIBRARIES(GTLfetch ${GTL_LIB})
 ADD_EXECUTABLE(GTLcnt GTLcnt.c)
 TARGET_LINK_LIBRARIES(GTLcnt ${GTL_LIB})
 
+ADD_EXECUTABLE(GTLcoverage GTLcoverage.c)
+TARGET_LINK_LIBRARIES(GTLcoverage ${GTL_LIB})
+
+ADD_EXECUTABLE(GTLsubCoverage GTLsubCoverage.c)
+TARGET_LINK_LIBRARIES(GTLsubCoverage ${GTL_LIB})
+
 ADD_EXECUTABLE(GTLindex GTLindex.c)
 TARGET_LINK_LIBRARIES(GTLindex ${GTL_LIB})
 
@@ -47,6 +53,8 @@ TARGET_LINK_LIBRARIES(GTLregionAnalysis ${GTL_LIB})
 
 INSTALL(TARGETS GTLamplicon
                 GTLcnt
+                GTLcoverage
+                GTLsubCoverage
                 GTLdecompress
                 GTLencodeUEM
                 GTLencodegenome
