@@ -169,10 +169,11 @@ fi
 echo "Start processing sample $SM on `date`"
 
 echo "Running MicMap on paired files $f1 $f2"
-MicMap -g $HT/$R.bin -p $HT/start0. -A $M -G 448 -1 <(gzip -dc $f1 | sed 's/ .*$//') -2 <(gzip -dc $f2 | sed 's/ .*$//') -r $D
+echo "WARNING - FIXME - truncating read length to 127 due to virus_match_AVX512 current limitation"
+MicMap -g $HT/$R.bin -p $HT/start0. -A $M -G 448 -1 <(gzip -dc $f1 | perl -ne 's/ .*$//;print;$_=<>;s/\s+$//s;print substr($_,0,127),"\n";$_=<>;print;$_=<>;s/\s+$//s;print substr($_,0,127),"\n"') -2 <(gzip -dc $f2 | perl -ne 's/ .*$//;print;$_=<>;s/\s+$//s;print substr($_,0,127),"\n";$_=<>;print;$_=<>;s/\s+$//s;print substr($_,0,127),"\n"') -r $D
 
 echo "Running RNA match for sample $SM"
-virus_match_AVX512 -i $T/mm_RNAseq_clean_$R.bin -1 <(GTLdecompress -g $T/$R.bin -r <(cat $D*.gtl) -m -a -h -c -u -o refless) -L 50 -F 75 -G 600 $stranded -d $destdir -t $M -v0 > $destdir/log
+virus_match_AVX512 -i $T/mm_RNAseq_clean_$R.bin -1 <(GTLdecompress -g $T/$R.bin -r <(cat $D*.gtl) -m -a -h -c -u -o refless) -L 50 -F 75 -G 600 $stranded -d $destdir -t $M -v0 > $destdir/log || exit 1
 
 echo "Extracting combined mapping information for sample $SM"
 grep -h ^XXMAP $destdir/cpu*.rslts | sort -k 2,2n -S 35% | pigz -c >$destdir/MAP.txt.gz
