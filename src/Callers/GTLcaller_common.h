@@ -97,6 +97,7 @@ typedef struct _decodedPair {
 	int reverseTAG1;
 	int reverseTAG2;
 	int delta;
+	unsigned char UMI[8];
 } decodedPair_t, *decodedPair_p_t;
 
 typedef struct _bt_node_t {
