@@ -35,7 +35,9 @@ use warnings;
 use Getopt::Long;
 use Storable;
 my $SNP = "/data/common_all_20151104.vcf.gz";
-GetOptions("SNP=s" => \$SNP);
+my $rr;
+GetOptions("SNP=s" => \$SNP,
+           "rr" => \$rr);
 die "Usage : $0 [...] [ -SNP <file> ] <VCF>" unless -s $SNP;
 
 my %V;
@@ -113,20 +115,26 @@ while ( <> ) {
       my $A = $h->{$F[1]};
       if ($F[3] eq $$A[1]) {
 	my @B = split /,/,$$A[2];
+	my @B2 = split /,/,$F[4];
 	foreach my $s (@B) {
-	  if ($s eq $F[4]) {
-	    $id = $$A[0];
-	    last;
+	  foreach my $s2 (@B2) {
+	    if ($s eq $s2) {
+	      $id = $$A[0];
+	      last;
+	    }
 	  }
+	  last if defined $id;
 	}
       }
     }
   }
-  unless (defined $id) {
-    $id = sprintf "rr%d", $cur;
-    $cur += 1;
+  if (defined $rr) {
+    unless (defined $id) {
+      $id = sprintf "rr%d", $cur;
+      $cur += 1;
+    }
   }
-  $F[2] = $id;
+  $F[2] = $id if defined $id;
   print join("\t", @F);
 }
 exit 0;

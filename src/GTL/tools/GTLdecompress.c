@@ -787,7 +787,7 @@ AlignTagsOnGenomeUsingCigarSingle(char *tag1, char *qual1, decodedSingle_p_t dsp
 //---------------------------------------------------------------
 
 static void
-AlignTagsOnGenomeUsingCigar(char *tag1, char *tag2, char *qual1, char *qual2, decodedPair_p_t dpp, unsigned char *cigar, unsigned int *off1, unsigned int *off2)
+AlignTagsOnGenomeUsingCigar(char *tag1, char *tag2, char *qual1, char *qual2, decodedPair_p_t dpp, unsigned char *cigar, unsigned int *pos1, unsigned int *pos2)
 {
 	unsigned int cigarpos = dpp->cigarposStart[0];
 	// check if 1st tag has a gapped alignment cigar
@@ -802,9 +802,9 @@ AlignTagsOnGenomeUsingCigar(char *tag1, char *tag2, char *qual1, char *qual2, de
 			char code = cigar[cigarpos++];
 			switch(code)
 			{
-				case 'S': // same as 'M'
-				case 'M':  while(pos-- >0) { tag1[a]   = dpp->tag1[r]; qual1[a]   = dpp->qual1[r]; a++; r++;                     }             break;
-				case 'D':  while(pos-- >0) { tag1[a]   = '_';          qual1[a]   = '_';           a++;       dpp->taglen1++;    }             break;
+				case 'S':  r += pos; dpp->taglen1 -= pos; if (a == 0) *pos1 += pos;                                                break;
+				case 'M':  while(pos-- >0) { tag1[a]   = dpp->tag1[r]; qual1[a]   = dpp->qual1[r]; a++; r++;                     } break;
+				case 'D':  while(pos-- >0) { tag1[a]   = '_';          qual1[a]   = '_';           a++;       dpp->taglen1++;    } break;
 				case 'I':
 					if (a > 0)
 					{
@@ -820,7 +820,7 @@ AlignTagsOnGenomeUsingCigar(char *tag1, char *tag2, char *qual1, char *qual2, de
 						r += pos;
 						a += 1;
 						dpp->taglen1 -= (pos - 1);
-						*off1 = 1;
+						*pos1 -= 1;
 					}
 					break;
 			}
@@ -848,9 +848,9 @@ AlignTagsOnGenomeUsingCigar(char *tag1, char *tag2, char *qual1, char *qual2, de
 			char code = cigar[cigarpos++];
 			switch(code)
 			{
-				case 'S': // same as 'M'
-				case 'M':  while(pos-- >0) { tag2[a]   = dpp->tag2[r]; qual2[a]   = dpp->qual2[r]; a++; r++;                     }             break;
-				case 'D':  while(pos-- >0) { tag2[a]   = '_';          qual2[a]   = '_';           a++;       dpp->taglen2++;    }             break;
+				case 'S':  r += pos; dpp->taglen2 -= pos; if (a == 0) *pos2 += pos;                                                break;
+				case 'M':  while(pos-- >0) { tag2[a]   = dpp->tag2[r]; qual2[a]   = dpp->qual2[r]; a++; r++;                     } break;
+				case 'D':  while(pos-- >0) { tag2[a]   = '_';          qual2[a]   = '_';           a++;       dpp->taglen2++;    } break;
 				case 'I':
 					if (a > 0)
 					{
@@ -866,7 +866,7 @@ AlignTagsOnGenomeUsingCigar(char *tag1, char *tag2, char *qual1, char *qual2, de
 						r += pos;
 						a += 1;
 						dpp->taglen2 -= (pos - 1);
-						*off2 = 1;
+						*pos2 -= 1;
 					}
 					break;
 			}
@@ -2024,6 +2024,48 @@ print_pair_SAM_u(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 //---------------------------------------------------------------
 
 static void
+tweak_ADNIview_hdr(char *h, decodedPair_p_t dpp)
+{
+	unsigned int nbColon = 0;
+	for (unsigned int k = 1; k < dpp->hhlen1; k++)
+	{
+		if (dpp->hdr1[k] == ':')
+			nbColon += 1;
+	}
+	memset(h, 0, dpp->hhlen1);
+	unsigned int k = 1;
+	unsigned int j = 0;
+	if (nbColon == 7)
+	{
+		while (dpp->hdr1[k] != ':')
+		{
+			h[j] = dpp->hdr1[k];
+			k += 1;
+			j += 1;
+		}
+		h[j] = dpp->hdr1[k];
+		k += 1;
+		j += 1;
+	}
+	if (nbColon >= 6)
+	{
+		// skip 3
+		while (dpp->hdr1[k] != ':')
+			k += 1;
+		k += 1;
+		while (dpp->hdr1[k] != ':')
+			k += 1;
+		k += 1;
+		while (dpp->hdr1[k] != ':')
+			k += 1;
+		k += 1;
+	}
+	strncpy(h + j, dpp->hdr1 + k, dpp->hhlen1 - k);
+	// FIXME - maybe limit length to what samtools expect...
+}
+//---------------------------------------------------------------
+
+static void
 print_pair_ADNIview_p(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 {
 	int leftTagPos,rightTagPos;
@@ -2048,18 +2090,20 @@ print_pair_ADNIview_p(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 
 	// FIXME -- strange ??
 	int orientation = 0;
+	char h[dpp->hhlen1];
+	tweak_ADNIview_hdr(h, dpp);
 
 	if (delta >= 0)
 	{
-		printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-		dpp->hhlen1 - 1, dpp->hdr1 + 1, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
+		printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+			h, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
 	}
-	printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-	dpp->hhlen2 - 1, dpp->hdr2 + 1, dpp->tag2, dpp->qual2, dpp->tag2, dpp->qual2, tpp->ppd[0][i].tag1pos-1+delta, kIsPairedEnd, dpp->taglen2,orientation,dpp->ordinal);
+	printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+		h, dpp->tag2, dpp->qual2, dpp->tag2, dpp->qual2, tpp->ppd[0][i].tag1pos-1+delta, kIsPairedEnd, dpp->taglen2,orientation,dpp->ordinal);
 	if (delta < 0)
 	{
-		printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-		dpp->hhlen1 - 1, dpp->hdr1 + 1, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
+		printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+			h, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
 	}
 }
 //---------------------------------------------------------------
@@ -2090,18 +2134,20 @@ print_pair_ADNIview_m(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 	//!!! FIXME: not necessary to remove /1 /2 should be done in decodeHeaderPair ???  to fix in all ADNIview.
 	// FIXME  orientation is always 0.... does not affect display, but...
 	int orientation = 0;
+	char h[dpp->hhlen1];
+	tweak_ADNIview_hdr(h, dpp);
 
 	if (delta >= 0)
 	{
-		printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-		dpp->hhlen1 - 1, dpp->hdr1 + 1, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
+		printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+			h, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
 	}
-	printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-	dpp->hhlen2 - 1, dpp->hdr2 + 1, dpp->tag2, dpp->qual2, dpp->tag2, dpp->qual2, tpp->ppd[0][i].tag1pos-1+delta, kIsPairedEnd, dpp->taglen2,orientation,dpp->ordinal);
+	printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+		h, dpp->tag2, dpp->qual2, dpp->tag2, dpp->qual2, tpp->ppd[0][i].tag1pos-1+delta, kIsPairedEnd, dpp->taglen2,orientation,dpp->ordinal);
 	if (delta < 0)
 	{
-		printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-		dpp->hhlen1 - 1, dpp->hdr1 + 1, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
+		printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+			h, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
 	}
 }
 //---------------------------------------------------------------
@@ -2130,18 +2176,20 @@ print_pair_ADNIview_mN(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 		return;
 
 	int orientation = 0;
+	char h[dpp->hhlen1];
+	tweak_ADNIview_hdr(h, dpp);
 
 	if (delta >= 0)
 	{
-		printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-		dpp->hhlen1 - 1, dpp->hdr1 + 1, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
+		printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+			h, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
 	}
-	printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-	dpp->hhlen2 - 1, dpp->hdr2 + 1, dpp->tag2, dpp->qual2, dpp->tag2, dpp->qual2, tpp->ppd[0][i].tag1pos-1+delta, kIsPairedEnd, dpp->taglen2,orientation,dpp->ordinal);
+	printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+		h, dpp->tag2, dpp->qual2, dpp->tag2, dpp->qual2, tpp->ppd[0][i].tag1pos-1+delta, kIsPairedEnd, dpp->taglen2,orientation,dpp->ordinal);
 	if (delta < 0)
 	{
-		printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-		dpp->hhlen1 - 1, dpp->hdr1 + 1, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
+		printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+			h, dpp->tag1, dpp->qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
 	}
 }
 //---------------------------------------------------------------
@@ -2174,21 +2222,23 @@ print_pair_ADNIview_g(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 		return;
 
 	int orientation = 0;
-	unsigned int off1 = 0;
-	unsigned int off2 = 0;
+	unsigned int pos1 = tpp->ppd[0][i].tag1pos-1;
+	unsigned int pos2 = tpp->ppd[0][i].tag1pos-1+delta;
+	char h[dpp->hhlen1];
+	tweak_ADNIview_hdr(h, dpp);
 
-	AlignTagsOnGenomeUsingCigar(tag1,tag2,qual1,qual2,dpp,tpp->cigar[0],&off1,&off2);
+	AlignTagsOnGenomeUsingCigar(tag1,tag2,qual1,qual2,dpp,tpp->cigar[0],&pos1,&pos2);
 	if (delta >= 0)
 	{
-		printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-		dpp->hhlen1 - 1, dpp->hdr1 + 1, tag1, qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1-off1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
+		printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+			h, tag1, qual1, dpp->tag1, dpp->qual1, pos1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
 	}
-	printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-	dpp->hhlen2 - 1, dpp->hdr2 + 1, tag2, qual2, dpp->tag2, dpp->qual2, tpp->ppd[0][i].tag1pos-1+delta-off2, kIsPairedEnd, dpp->taglen2,orientation,dpp->ordinal);
+	printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+		h, tag2, qual2, dpp->tag2, dpp->qual2, pos2, kIsPairedEnd, dpp->taglen2,orientation,dpp->ordinal);
 	if (delta < 0)
 	{
-		printf("%.*s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
-		dpp->hhlen1 - 1, dpp->hdr1 + 1, tag1, qual1, dpp->tag1, dpp->qual1, tpp->ppd[0][i].tag1pos-1-off1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
+		printf("%s\t%s\t%s\t%s\t%s\t%u\t%d\t%d\t%d\t%lu\n",
+			h, tag1, qual1, dpp->tag1, dpp->qual1, pos1, kIsPairedEnd, dpp->taglen1,orientation,dpp->ordinal);
 	}
 }
 //---------------------------------------------------------------
