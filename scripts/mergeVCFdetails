@@ -1,0 +1,174 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) UNIL - University of Lausanne, Switzerland                 2020  Nicolas Guex
+#  Copyright (C) EPFL - Ecole Polytechnique Fédérale Lausanne, Switzerland  2020  Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+local *FD;
+my $n1 = $ARGV[0];
+my $n2 = $ARGV[1];
+my $notFirst;
+for my $c (1 .. 24) {
+  my $fn = $n1 . "_vs_" . $n2 . "_chr" . $c . ".vcf";
+  next unless -s $fn;
+  open FD, $fn or die "Can't open $fn : $!";
+  my %C;
+  while ( <FD> ) {
+    if (/^#/) {
+      print unless defined $notFirst;
+      if (/ID=REGWRN/ and not defined($notFirst)) {
+	print "##INFO=<ID=GENR,Number=1,Type=String,Description=\"Genome region\">\n";
+	print "##INFO=<ID=ORIR,Number=.,Type=Integer,Description=\"Allele orientation coverage\">\n";
+	print "##INFO=<ID=PHREDR,Number=.,Type=Float,Description=\"PHRED accounting for values 0-5,6-9,10-19,20-max\">\n";
+	print "##INFO=<ID=GTR,Number=1,Type=String,Description=\"Genotype\">\n";
+	print "##INFO=<ID=DPR,Number=1,Type=Integer,Description=\"Total read depth\">\n";
+	print "##INFO=<ID=ADR,Number=R,Type=Integer,Description=\"Per-sample read depths for each allele\">\n";
+	print "##INFO=<ID=GENA,Number=1,Type=String,Description=\"Genome region\">\n";
+	print "##INFO=<ID=ORIA,Number=.,Type=Integer,Description=\"Allele orientation coverage\">\n";
+	print "##INFO=<ID=PHREDA,Number=.,Type=Float,Description=\"PHRED accounting for values 0-5,6-9,10-19,20-max\">\n";
+	print "##INFO=<ID=GTA,Number=1,Type=String,Description=\"Genotype\">\n";
+	print "##INFO=<ID=DPA,Number=1,Type=Integer,Description=\"Total read depth\">\n";
+	print "##INFO=<ID=ADA,Number=R,Type=Integer,Description=\"Per-sample read depths for each allele\">\n";
+      }
+      next;
+    }
+    $notFirst = 1;
+    s/\s+$//s;
+    my @F = split /\t/;
+    my ($gt1) = $F[9] =~ /^([^:]+):/;
+    my ($gt2) = $F[10] =~ /^([^:]+):/;
+    if (($gt1 eq $gt2) or ($gt1 =~ /\//) or (($gt1 eq "1") and ($gt2 =~ /\//))) {
+      $F[6] = "germline";
+    }
+    $C{$F[1]} = \@F; # should maybe verify dups
+  }
+  close FD;
+  my $fna = $n1 . "_chr" . $c . ".vcf";
+  open FD, $fna or die "Can't open $fna : $!";
+  while ( <FD> ) {
+    next if /^#/;
+    my @F = split /\t/;
+    next unless defined $C{$F[1]};
+    my $A = $C{$F[1]};
+    $F[7] =~ s/^.*;GEN=/GEN=/;
+    $F[7] =~ s/;WND=.*$//;
+    $F[7] =~ s/=/A=/g;
+    $$A[7] .= ";" . $F[7];
+  }
+  close FD;
+  my $fnb = $n2 . "_chr" . $c . ".vcf";
+  open FD, $fnb or die "Can't open $fnb : $!";
+  while ( <FD> ) {
+    next if /^#/;
+    my @F = split /\t/;
+    next unless defined $C{$F[1]};
+    my $A = $C{$F[1]};
+    $F[7] =~ s/^.*;GEN=/GEN=/;
+    $F[7] =~ s/;WND=.*$//;
+    $F[7] =~ s/=/R=/g;
+    $$A[7] .= ";" . $F[7];
+  }
+  close FD;
+  for my $pos (sort {$a <=> $b} keys %C) {
+    print join("\t", @{$C{$pos}}), "\n";
+  }
+}
+exit 0;
+__END__
+==> Nr2_chr1.vcf <==
+##fileformat=VCFv4.2
+##fileDate=20190731
+#...
+##source=GTL caller 3 - GTL version 1.0-c4e2e68 built Jul 31 2019, 00:47:23 on pccig4007.unil.ch
+##variants_justified=left
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	CALLER3
+chr1	69270	.	A	G	50	PASS	WAF=1.00;WTRASH=0.00;WA=1;WREG=1;GEN="CCAACCTCTC|A|CTCATTGATC";ORI=53,0;PHRED=0.0,0.0,0.0,53.0;GT=1/1;DP=53;AD=0,53;WND=69252-69292	GT:DP:AD	1/1:53:0,53
+chr1	69761	.	A	T	50	PASS	WAF=0.55,0.45;WTRASH=0.00;WA=2;WREG=1;GEN="CGCCCTTTAG|A|TAAGTCGTCC";ORI=0,41,2,32;PHRED=0.0,0.0,0.0,41.0,0.0,0.0,0.0,34.0;GT=1/0;DP=75;AD=41,34;WND=69750-69790	GT:DP:AD	1/0:75:41,34
+chr1	69897	.	T	C	50	PASS	WAF=1.00;WTRASH=0.00;WA=1;WREG=1;GEN="TATTTTATTC|T|GTGATCACCC";ORI=12,14;PHRED=0.0,0.0,0.0,26.0;GT=1/1;DP=26;AD=0,26;WND=69870-69910	GT:DP:AD	1/1:26:0,26
+chr1	187327	.	G	A	50	PASS	WAF=0.25,0.25,0.25,0.19,0.06;WTRASH=0.00;WA=5;WREG=3;GEN="AAGAAGGTGT|G|TGACCAGGGA";ORI=4,0,4,0;PHRED=0.0,0.0,0.0,4.0,0.0,0.0,0.0,4.0;GT=1/0;DP=16;AD=4,4;WND=187322-187362	GT:DP:AD	1/0:16:4,4
+chr1	187331	.	C	G	50	PASS	WAF=0.25,0.25,0.25,0.19,0.06;WTRASH=0.00;WA=5;WREG=3;GEN="AGGTGTGTGA|C|CAGGGAGGTC";ORI=4,0,4,0;PHRED=0.0,0.0,0.0,4.0,0.0,0.0,0.0,3.0;GT=1/0;DP=16;AD=4,4;WND=187322-187362	GT:DP:AD	1/0:16:4,4
+chr1	1043223	.	CCT	C	50	PASS	WAF=0.71,0.29;WTRASH=0.00;WA=2;WREG=1;GEN="CCACTGAGCC|CCT|GTGTCCTTCC";ORI=16,4,7,1;PHRED=0.0,0.0,0.0,20.0,0.0,0.0,0.0,18.0;GT=1/0;DP=28;AD=20,8;WND=1043223-1043263	GT:DP:AD	1/0:28:20,8
+chr1	1048778	.	AAAAAAAAAAAAGCA	A	50	PASS	WAF=0.44,0.39,0.06,0.06,0.06;WTRASH=0.00;WA=5;WREG=1;REGWRN;GEN="AAAAAAAAAA|AAAAAAAAAAAAGCA|GGGGGCGGTT";ORI=7,1,7,0;PHRED=0.0,0.0,0.0,8.0,0.0,0.0,0.0,6.3;GT=1/0;DP=18;AD=8,7;WND=1048753-1048793	GT:DP:AD	1/0:18:8,7
+chr1	1048793	.	G	GC	50	PASS	WAF=0.56,0.44;WTRASH=0.00;WA=2;WREG=1;GEN="AAAAAAAGCA|G|GGGGCGGTTT";ORI=9,1,8,0;PHRED=0.0,0.0,0.0,10.0,0.0,0.0,0.0,4.0;GT=1/0;DP=18;AD=10,8;WND=1048793-1048833	GT:DP:AD	1/0:18:10,8
+chr1	1312198	.	T	TGG	50	PASS	WAF=1.00;WTRASH=0.00;WA=1;WREG=1;GEN="CCCAAGGGAG|T|GGGGGGGGGG";ORI=0,0,7,1;PHRED=0.0,0.0,0.0,0.0,0.0,0.0,0.0,8.3;GT=1/1;DP=8;AD=0,8;WND=1312176-1312213	GT:DP:AD	1/1:8:0,8
+
+==> Nr7_chr1.vcf <==
+##fileformat=VCFv4.2
+##source=GTL caller 3 - GTL version 1.0-c4e2e68 built Jul 31 2019, 00:47:23 on pccig4007.unil.ch
+##variants_justified=left
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	CALLER3
+chr1	69761	.	A	T	50	PASS	WAF=0.59,0.41;WTRASH=0.00;WA=2;WREG=1;GEN="CGCCCTTTAG|A|TAAGTCGTCC";ORI=17,30,2,31;PHRED=0.0,0.0,0.0,47.0,0.0,0.0,0.0,33.0;GT=0/1;DP=80;AD=47,33;WND=69750-69790	GT:DP:AD	0/1:80:47,33
+chr1	69270	.	A	G	50	PASS	WAF=1.00;WTRASH=0.00;WA=1;WREG=1;GEN="CCAACCTCTC|A|CTCATTGATC";ORI=50,0;PHRED=0.0,0.0,0.0,50.0;GT=1/1;DP=50;AD=0,50;WND=69252-69292	GT:DP:AD	1/1:50:0,50
+chr1	69897	.	T	C	50	PASS	WAF=1.00;WTRASH=0.00;WA=1;WREG=1;GEN="TATTTTATTC|T|GTGATCACCC";ORI=18,36;PHRED=0.0,0.0,0.0,54.0;GT=1/1;DP=54;AD=0,54;WND=69870-69910	GT:DP:AD	1/1:54:0,54
+chr1	69511	.	A	G	50	PASS	WAF=1.00;WTRASH=0.00;WA=1;WREG=1;GEN="TATGGCTGTC|A|CATGGGGAAT";ORI=172,109;PHRED=0.0,0.0,0.0,281.0;GT=1/1;DP=281;AD=0,281;WND=69495-69535	GT:DP:AD	1/1:281:0,281
+chr1	182785	.	A	G	50	PASS	WAF=0.78,0.22;WTRASH=0.00;WA=2;WREG=2;GEN="GCTGTGATAC|A|TGGCCAGCCC";ORI=100,197,31,54;PHRED=0.0,0.0,0.0,296.9,0.0,0.0,0.0,85.0;GT=1/0;DP=407;AD=316,91;WND=182764-182804	GT:DP:AD	1/0:407:316,91
+chr1	182791	.	A	G	50	PASS	WAF=0.78,0.22;WTRASH=0.00;WA=2;WREG=2;GEN="ATACATGGCC|A|GCCCTCGCTC";ORI=100,216,32,59;PHRED=0.0,0.0,0.0,268.9,0.0,0.0,0.0,86.0;GT=1/0;DP=407;AD=316,91;WND=182764-182804	GT:DP:AD	1/0:407:316,91
+chr1	185451	.	A	G	50	PASS	WAF=0.62,0.38;WTRASH=0.00;WA=2;WREG=1;GEN="ACAGAATTAC|A|AGGTGCTGGC";ORI=7,6,0,8;PHRED=0.0,0.0,0.0,13.0,0.0,0.0,0.0,8.0;GT=0/1;DP=21;AD=13,8;WND=185418-185458	GT:DP:AD	0/1:21:13,8
+chr1	187302	.	A	G	50	PASS	WAF=1.00;WTRASH=0.00;WA=1;WREG=1;GEN="AACACAAAGT|A|TGGGGTGTCT";ORI=14,0;PHRED=0.0,0.0,0.0,14.0;GT=1/1;DP=14;AD=0,14;WND=187282-187322	GT:DP:AD	1/1:14:0,14
+chr1	187327	.	G	A	50	PASS	WAF=0.30,0.30,0.22,0.19;WTRASH=0.00;WA=4;WREG=3;REGWRN;GEN="AAGAAGGTGT|G|TGACCAGGGA";ORI=7,0;PHRED=0.0,0.0,0.0,7.0;GT=1/1;DP=27;AD=0,8;WND=187322-187362	GT:DP:AD	1/1:27:0,8
+chr1	187331	.	C	G	50	PASS	WAF=0.30,0.30,0.22,0.19;WTRASH=0.00;WA=4;WREG=3;GEN="AGGTGTGTGA|C|CAGGGAGGTC";ORI=8,0;PHRED=0.0,0.0,0.0,8.0;GT=1/1;DP=27;AD=0,8;WND=187322-187362	GT:DP:AD	1/1:27:0,8
+chr1	187352	.	C	G	50	PASS	WAF=0.30,0.30,0.22,0.19;WTRASH=0.00;WA=4;WREG=3;GEN="CCCGGCCCAG|C|TCCCATCCCA";ORI=8,0,7,1;PHRED=0.0,0.0,0.0,8.0,0.0,0.0,0.0,8.0;GT=1/0;DP=27;AD=8,8;WND=187322-187362	GT:DP:AD	1/0:27:8,8
+chr1	187485	.	G	A	50	PASS	WAF=0.68,0.32;WTRASH=0.00;WA=2;WREG=1;GEN="ACATGAGGTC|G|TTGGCAATGC";ORI=44,25,19,14;PHRED=0.0,0.0,0.0,69.0,0.0,0.0,0.0,33.0;GT=1/0;DP=102;AD=69,33;WND=187482-187522	GT:DP:AD	1/0:102:69,33
+chr1	1043223	.	CCT	C	50	PASS	WAF=0.52,0.48;WTRASH=0.00;WA=2;WREG=1;GEN="CCACTGAGCC|CCT|GTGTCCTTCC";ORI=39,4,34,5;PHRED=0.0,0.0,0.0,42.0,0.0,0.0,0.0,39.0;GT=1/0;DP=82;AD=43,39;WND=1043223-1043263	GT:DP:AD	1/0:82:43,39
+chr1	1048767	.	C	CAA	50	PASS	WAF=0.64,0.15,0.08,0.06;WTRASH=0.08;WA=4;WREG=2;GEN="AACTCCGTCT|C|AAAAAAAAAA";ORI=29,5,8,0;PHRED=0.0,0.0,0.0,33.0,0.0,0.0,0.0,11.5;GT=0/1;DP=53;AD=34,8;WND=1048753-1048793	GT:DP:AD	0/1:53:34,8
+chr1	1048777	.	AAAAAAAAAAAAAGC	A	50	PASS	WAF=0.64,0.15,0.08,0.06;WTRASH=0.08;WA=4;WREG=2;REGWRN;ORI=29,5,8,0;PHRED=0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0;GEN="CAAAAAAAAA|AAAAAAAAAAAAAGC|AGGGGGCGGT";GT=1|0;DP=53;AD=34,8;WND=1048753-1048793	GT:DP:AD	1|0:53:34,8
+chr1	1048793	.	G	GC	50	PASS	WAF=0.68,0.32;WTRASH=0.00;WA=2;WREG=1;GEN="AAAAAAAGCA|G|GGGGCGGTTT";ORI=33,5,18,0;PHRED=0.0,0.0,0.0,38.0,1.0,0.0,0.0,16.0;GT=1/0;DP=56;AD=38,18;WND=1048793-1048833	GT:DP:AD	1/0:56:38,18
+chr1	1312198	.	T	TGG	50	PASS	WAF=0.71,0.12,0.12;WTRASH=0.05;WA=3;WREG=1;REGWRN;GEN="CCCAAGGGAG|T|GGGGGGGGGG";ORI=28,1,4,1;PHRED=0.0,0.0,0.0,29.5,0.0,0.0,0.0,2.0;GT=1/0;DP=41;AD=29,5;WND=1312176-1312213	GT:DP:AD	1/0:41:29,5
+
+==> Nr7_vs_Nr2_chr1.vcf <==
+##fileformat=VCFv4.2
+##phasing=none
+##source=GTL Diff Caller 3 - GTL version 1.0-c4e2e68 built Jul 31 2019, 00:47:25 on pccig4007.unil.ch
+##variants_justified=left
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	REFERENCE	TUMOR
+chr1	69270	.	A	G	50	PASS	WAF=0.90,0.80,0.10,0.20;WTRASH=0.00,0.00;WA=2;WREG=2;WND=69252-69292	GT:DP:AD	1:59:0,53	1:61:0,49
+chr1	69279	.	T	TGCTCATTGAT	50	PASS	WAF=0.90,0.80,0.10,0.20;WTRASH=0.00,0.00;WA=2;WREG=2;WND=69252-69292	GT:DP:AD	0/1:59:53,6	0/1:61:49,12
+chr1	69761	.	A	T	50	PASS	WAF=0.59,0.45,0.41,0.55;WTRASH=0.00,0.00;WA=2;WREG=1;WND=69750-69790	GT:DP:AD	0/1:80:47,33	0/1:75:34,41
+chr1	69897	.	T	C	50	PASS	WAF=1.00,1.00;WTRASH=0.00,0.00;WA=1;WREG=1;WND=69870-69910	GT:DP:AD	1:54:0,54	1:26:0,26
+chr1	69511	.	A	G	50	PASS	WAF=1.00,1.00;WTRASH=0.00,0.00;WA=1;WREG=1;WND=69495-69535	GT:DP:AD	1:281:0,281	1:501:0,501
+chr1	182785	.	A	G	50	PASS	WAF=0.78,0.79,0.22,0.21;WTRASH=0.00,0.00;WA=2;WREG=2;WND=182764-182804	GT:DP:AD	0/1:407:91,316	0/1:422:89,333
+chr1	182791	.	A	G	50	PASS	WAF=0.78,0.79,0.22,0.21;WTRASH=0.00,0.00;WA=2;WREG=2;WND=182764-182804	GT:DP:AD	0/1:407:91,316	0/1:422:90,332
+chr1	185451	.	A	G	50	PASS	WAF=0.62,1.00,0.38,0.00;WTRASH=0.00,0.00;WA=2;WREG=1;WND=185418-185458	GT:DP:AD	0/1:21:13,8	0:3:3,0
+chr1	187302	.	A	G	50	PASS	WAF=1.00,1.00;WTRASH=0.00,0.00;WA=1;WREG=1;WND=187282-187322	GT:DP:AD	1:14:0,14	1:3:0,3
+chr1	187327	.	G	A	50	PASS	WAF=0.52,0.31,0.30,0.44,0.19,0.25;WTRASH=0.00,0.00;WA=3;WREG=3;WND=187322-187362	GT:DP:AD	0/1:27:5,22	0/1:16:4,12
+chr1	187331	.	C	G	50	PASS	WAF=0.52,0.31,0.30,0.44,0.19,0.25;WTRASH=0.00,0.00;WA=3;WREG=3;WND=187322-187362	GT:DP:AD	0/1:27:5,22	0/1:16:4,12
+chr1	187352	.	C	G	50	PASS	WAF=0.52,0.31,0.30,0.44,0.19,0.25;WTRASH=0.00,0.00;WA=3;WREG=3;WND=187322-187362	GT:DP:AD	0/1:27:19,8	0/1:16:9,7
+chr1	187485	.	G	A	50	PASS	WAF=0.68,0.73,0.32,0.27;WTRASH=0.00,0.00;WA=2;WREG=1;WND=187482-187522	GT:DP:AD	0/1:102:33,69	0/1:73:20,53
+chr1	953778	.	GA	CC	50	PASS	WAF=1.00,1.00;WTRASH=0.00,0.00;WA=1;WREG=1;WND=953747-953787	GT:DP:AD	1:57:0,57	1:25:0,25
+chr1	1041134	.	C	A,G	50	PASS	WAF=0.60,0.30,0.33,0.70,0.07,0.00;WTRASH=0.00,0.00;WA=3;WREG=1;WND=1041123-1041163	GT:DP:AD	0/1/2:15:9,5,1	0/1:10:3,7,0
+chr1	1043223	.	CCT	C	50	PASS	WAF=0.51,0.71,0.49,0.29;WTRASH=0.00,0.00;WA=2;WREG=1;WND=1043183-1043223	GT:DP:AD	0/1:80:39,41	0/1:28:8,20
+chr1	1043223	.	CCT	C	50	PASS	WAF=0.52,0.71,0.48,0.29;WTRASH=0.00,0.00;WA=2;WREG=1;WND=1043223-1043263	GT:DP:AD	0/1:82:39,43	0/1:28:8,20
+chr1	1048767	.	C	CAA,CA	50	PASS	WAF=0.68,0.58,0.05,0.05,0.05,0.00,0.05,0.00,0.00,0.11,0.00,0.11,0.02,0.05;WTRASH=0.15,0.00;WA=9;WREG=3;WND=1048753-1048793	GT:DP:AD	0/1:59:40,8,1	0/2:19:13,0,2
+chr1	1048777	.	AAAAAAAAAAAAAGC	A	50	PASS	WAF=0.68,0.58,0.05,0.05,0.05,0.00,0.05,0.00,0.00,0.11,0.00,0.11,0.02,0.05;WTRASH=0.15,0.00;WA=9;WREG=3;WND=1048753-1048793	GT:DP:AD	0/1:59:4,41	0/1:19:3,11
+chr1	1048793	.	G	GC	50	PASS	WAF=0.68,0.58,0.05,0.05,0.05,0.00,0.05,0.00,0.00,0.11,0.00,0.11,0.02,0.05;WTRASH=0.15,0.00;WA=9;WREG=3;WND=1048753-1048793	GT:DP:AD	0/1:59:18,40	0/1:19:8,11
+chr1	1048793	.	G	GC	50	PASS	WAF=0.68,0.56,0.32,0.44;WTRASH=0.00,0.00;WA=2;WREG=1;WND=1048793-1048833	GT:DP:AD	0/1:56:18,38	0/1:18:8,10
+chr1	1312198	.	T	TGG,TG	50	PASS	WAF=0.71,0.64,0.12,0.27,0.12,0.09;WTRASH=0.05,0.00;WA=3;WREG=1;WND=1312176-1312213	GT:DP:AD	0/1/2:41:5,29,5	0/1/2:11:3,7,1
+chr1	1388772	.	GAAAA	G,GAA,GGAAA	50	PASS	WAF=0.32,0.15,0.24,0.08,0.12,0.08,0.00,0.23,0.08,0.08,0.04,0.08,0.04,0.08,0.00,0.08;WTRASH=0.16,0.00;WA=10;WREG=3;WND=1388753-1388793	GT:DP:AD	0/1/2:25:8,7,4,1	0/1/2:13:3,1,4,0

@@ -1,0 +1,341 @@
+#!/bin/bash
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) UNIL - University of Lausanne, Switzerland                    2020  Nicolas Guex
+#  Copyright (C) EPFL - Ecole Polytechnique Fédérale de Lausanne, Switzerland  2020  Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@epfl.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+
+# Reference assembly
+R=b38
+
+# Tables repository
+HT=/var/lib/hugetlbfs/global/pagesize-1GB
+
+# GTL binaries
+export GTLBINDIR=/usr/local/bin
+
+# Picard jar
+PICARD=/usr/local/share/java/picard.jar
+
+# Annotation
+A=/data6/b38/All_20160527.vcf.gz
+
+# padding around selected intervals
+padding=0
+
+# Run caller3 ?
+run3=1
+
+destdir=/tmp
+tempdir=/tmp
+tables=/data6
+minPct=2
+M=24
+
+function usage ()
+{
+  echo "Usage: $0 [options] <blood name> <tumor name> <target.bed>" >&2
+  echo "" >&2
+  echo "This script calls Mutect2 tools to call somatic variants between reference and tumor" >&2
+  echo "and produces an output VCF file <tumor>_vs_<blood>.vcf.gz in the destination directory." >&2
+  echo "It is expected that BAM files for both samples are already available." >&2
+  echo "" >&2
+  echo "options (default values are given in square brackets):" >&2
+  echo " -d <dir>    output directory, where the new BAM file named <name>_<ref>.bam will be created [$destdir]" >&2
+  echo " -R <dir>    reference tables directory, where subdirectories for each reference is located [$tables]" >&2
+  echo " -r <str>    name of the reference used for mapping [$R - so reference files will be located in $tables/$R]" >&2
+  echo " -t <dir>    Number of threads [$M]">&2
+  echo " -T <dir>    Temporary path [$tempdir]">&2
+  echo " -h          show this usage info and exit">&2
+  echo " -P <int>    additional padding around selected intervals [$padding]">&2
+  exit 1
+}
+
+# wait until there are less than $1 jobs already running
+function getRunSlot ()
+{
+  cur=`jobs -l | grep Running | awk '{print $2}' | wc -l`
+  while [[ $cur -ge $1 ]]; do
+    sleep 15
+    cur=`jobs -l | grep Running | awk '{print $2}' | wc -l`
+  done
+}
+
+while getopts ":d:hr:t:T:P:" opt; do
+  case $opt in
+    d)
+      destdir=$OPTARG
+      ;;
+    h)
+      usage
+      ;;
+    r)
+      R=$OPTARG
+      ;;
+    R)
+      tables=$OPTARG
+      ;;
+    t)
+      M=$OPTARG
+      ;;
+    T)
+      tempdir=$OPTARG
+      ;;
+    P)
+      padding=$OPTARG
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      usage
+      ;;
+    :)
+      echo "Option -$OPTARG requires an argument." >&2
+      usage
+      ;;
+  esac
+done
+
+if (( $# - $OPTIND != 2 )); then
+  usage
+fi
+shift $(($OPTIND - 1))
+blood=$1
+tumor=$2
+bed=$3
+
+# Tables
+T=$tables/$R
+
+BD=$destdir/${blood}_$R
+TD=$destdir/${tumor}_$R
+
+if [[ ! -d $BD ]]; then
+  echo >&2
+  echo "Result directory $BD does not exist - need to create it first" >&2
+  echo >&2
+  exit 2
+fi
+
+if [[ ! -d $TD ]]; then
+  echo >&2
+  echo "Result directory $TD does not exist - need to create it first" >&2
+  echo >&2
+  exit 2
+fi
+
+for f in $R.bin $R.cfg $R.fa.gz $R.fa.gz.fai $R.fa.gz.gzi header_$R; do
+  if [[ ! -s $T/$f ]]; then
+    echo >&2
+    echo "Error - file $f should be available in $T" >&2
+    echo >&2
+    exit 1
+  fi
+done
+
+if [[ $run3 -gt 0 ]]; then
+  if [[ ! -s $HT/$R.bin ]]; then
+    rm -f $HT/*
+    echo -n "Loading $R.bin in $HT ..."
+    MicMap -g $T/$R.bin -p $T/tbl_18nt/start0. -s $HT
+    if [[ ! -s $HT/$R.bin ]]; then
+      echo
+      echo "Error - $R.bin should be available in $HT"
+      exit 1
+    fi
+    echo "done"
+  fi
+fi
+
+echo "Start processing sample $SM on `date`"
+
+if [[ $run3 -gt 0 ]]; then
+  if ls $BD/*.gtl.idr >/dev/null 2>/dev/null; then
+    echo "Indexed GTL already exists in $BD - skipping indexing"
+  else
+    GTLindex -g $HT/$R.bin $BD/chr*.gtl
+  fi
+
+  # FIXME - run several in parallel, but check for ressources
+  # FIXME - going below -m 5 seems to break something...
+  for c in `seq 1 24`; do
+    if [[ -s $destdir/${tumor}_vs_${blood}_chr$c.vcf ]]; then
+      echo "$destdir/${tumor}_vs_${blood}_chr$c.vcf already exists - skipping"
+    else
+      echo "Generating $destdir/${tumor}_vs_${blood}_chr$c.vcf"
+      getRunSlot 4
+      GTLdiffCaller3 -g $HT/$R.bin -C $c -f 0 -m 5 -T 3/9 -w 40 -s $bed -r "$BD/chr${c}?_?.gtl" -t "$TD/chr${c}?_?.gtl" > $destdir/${tumor}_vs_${blood}_chr$c.vcf &
+    fi
+  done
+  wait
+
+  # do a caller3 of each DNA individually
+  for c in `seq 1 24`; do
+    if [[ -s $destdir/${tumor}_chr$c.vcf ]]; then
+      echo "$destdir/${tumor}_chr$c.vcf already exists - skipping"
+    else
+      echo "Generating $destdir/${tumor}_chr$c.vcf"
+      getRunSlot 8
+      GTLcaller3 -g $HT/$R.bin -C $c -f 0 -m 5 -T 3/9 -V $destdir/${tumor}_vs_${blood}_chr$c.vcf -F -W $TD/chr${c}?_?.gtl > $destdir/${tumor}_chr$c.vcf &
+    fi
+  done
+  wait
+  for c in `seq 1 24`; do
+    if [[ -s $destdir/${blood}_chr$c.vcf ]]; then
+      echo "$destdir/${blood}_chr$c.vcf already exists - skipping"
+    else
+      echo "Generating $destdir/${blood}_chr$c.vcf"
+      getRunSlot 8
+      GTLcaller3 -g $HT/$R.bin -C $c -f 0 -m 5 -T 3/9 -V $destdir/${tumor}_vs_${blood}_chr$c.vcf -F -W $BD/chr${c}?_?.gtl > $destdir/${blood}_chr$c.vcf &
+    fi
+  done
+  wait
+
+  pushd $destdir
+  mergeVCFdetails $tumor $blood > ${tumor}_vs_${blood}_merged.vcf
+  annotateVCF -SNP $A ${tumor}_vs_${blood}_merged.vcf >${tumor}_vs_${blood}.vcf
+  rm ${tumor}_vs_${blood}_chr*.vcf
+  rm ${tumor}_chr*.vcf
+  rm ${blood}_chr*.vcf
+  popd
+fi
+
+# wget https://storage.googleapis.com/gatk-best-practices/somatic-hg38/af-only-gnomad.hg38.vcf.gz
+# wget https://storage.googleapis.com/gatk-best-practices/somatic-hg38/af-only-gnomad.hg38.vcf.gz.tbi
+
+# we assume to have the pon...
+if false; then
+  for f in TIL483 TIL487 TIL504 TIL505 TIL516 TIL542; do
+    gatk Mutect2 -R /data6/b38/b38.fa.gz -I ${f}_b38.bam --max-mnp-distance 0 -O ${f}_normal.vcf.gz &
+  done
+  wait
+  rm -rf pon_db
+  gatk GenomicsDBImport -R /data6/b38/b38.fa.gz -L $bed --genomicsdb-workspace-path pon_db -V TIL483_normal.vcf.gz -V TIL487_normal.vcf.gz -V TIL504_normal.vcf.gz -V TIL505_normal.vcf.gz -V TIL516_normal.vcf.gz -V TIL542_normal.vcf.gz --merge-input-intervals
+  gatk CreateSomaticPanelOfNormals -R /data6/b38/b38.fa.gz --germline-resource /data6/b38/af-only-gnomad.hg38.vcf.gz -V gendb://pon_db -O pon_TIL_6.vcf.gz
+  rm -rf pon_db
+fi
+
+pushd $destdir
+# do a Mutect2 analysis
+for c in `seq 1 24`; do
+  if [[ -s ${tumor}_vs_${blood}_M2U_chr$c.vcf ]]; then
+    echo "${tumor}_vs_${blood}_M2U_chr$c.vcf already exists - skipping"
+  else
+    echo "Generating ${tumor}_vs_${blood}_M2U_chr$c.vcf"
+    getRunSlot 8
+    case $c in
+    23) chr=chrX ;;
+    24) chr=chrY ;;
+    *)  chr=chr$c ;;
+    esac
+    gatk Mutect2 -R $T/$R.fa.gz -I $BD.bam -I $TD.bam --normal=$blood --tumor=$tumor -O ${tumor}_vs_${blood}_M2U_chr$c.vcf --germline-resource $T/af-only-gnomad.hg38.vcf.gz --panel-of-normals pon_TIL_6.vcf.gz --f1r2-tar-gz ${tumor}_chr${c}_f1r2.tar.gz -L $chr &
+  fi
+done
+wait
+
+if [[ -s ${tumor}_read-orientation-model.tar.gz ]]; then
+  echo "${tumor}_read-orientation-model.tar.gz already exists"
+else
+  echo "Generating ${tumor}_read-orientation-model.tar.gz"
+  all_f1r2_input=`for c in {1..22}; do printf -- "-I ${tumor}_chr${c}_f1r2.tar.gz "; done`
+  gatk LearnReadOrientationModel $all_f1r2_input -O ${tumor}_read-orientation-model.tar.gz || exit 1
+fi
+
+if [[ -s ${tumor}_getpileupsummaries.table ]]; then
+  echo "${tumor}_getpileupsummaries.table already exists"
+else
+  echo "Generating ${tumor}_getpileupsummaries.table"
+  gatk GetPileupSummaries -I $TD.bam -V $T/small_exac_common_3.hg38.vcf.gz -L $T/small_exac_common_3.hg38.vcf.gz -O ${tumor}_getpileupsummaries.table || exit 1
+fi
+
+if [[ -s ${tumor}_segments.table ]]; then
+  echo "${tumor}_segments.table and ${tumor}_calculatecontamination.table already exist"
+else
+  echo "Generating ${tumor}_segments.table and ${tumor}_calculatecontamination.table"
+  gatk CalculateContamination -I ${tumor}_getpileupsummaries.table -tumor-segmentation ${tumor}_segments.table -O ${tumor}_calculatecontamination.table || exit 1
+fi
+
+if [[ -s ${tumor}_vs_${blood}_M2U.vcf.gz ]]; then
+  echo "${tumor}_vs_${blood}_M2U.vcf.gz already exists"
+else
+  echo "Generating ${tumor}_vs_${blood}_M2U.vcf.gz"
+  all_vcf_input=`for c in {1..24}; do printf -- "-I ${tumor}_vs_${blood}_M2U_chr$c.vcf "; done`
+  gatk MergeVcfs $all_vcf_input -O ${tumor}_vs_${blood}_M2U.vcf.gz || exit 1
+  all_stat_input=`for c in {1..24}; do printf -- "--stats ${tumor}_vs_${blood}_M2U_chr$c.vcf.stats "; done`
+  gatk MergeMutectStats $all_stat_input -O ${tumor}_vs_${blood}_M2U.vcf.gz.stats || exit 1
+fi
+
+if [[ -s ${tumor}_vs_${blood}_M2.vcf.gz ]]; then
+  echo "${tumor}_vs_${blood}_M2.vcf.gz already exists"
+else
+  echo "Generating ${tumor}_vs_${blood}_M2.vcf.gz"
+  doPad=
+  if [[ $padding -gt 0 ]]; then doPad="-ip $padding"; fi
+  gatk FilterMutectCalls -R $T/$R.fa.gz -V ${tumor}_vs_${blood}_M2U.vcf.gz --tumor-segmentation ${tumor}_segments.table --contamination-table ${tumor}_calculatecontamination.table --ob-priors ${tumor}_read-orientation-model.tar.gz -L $bed $doPad -O ${tumor}_vs_${blood}_M2.vcf.gz || exit 1
+fi
+rm ${tumor}_vs_${blood}_M2U*
+rm ${tumor}_chr{?,??}_f1r2.tar.gz
+popd
+
+# do an old diffCaller - seems to work more reliably, although yielding many FP
+if [[ -s $destdir/${tumor}_vs_${blood}_old.vcf ]]; then
+  echo "$destdir/${tumor}_vs_${blood}_old.vcf already exists - skipping"
+else
+  for c in `seq 1 24`; do
+    if [[ -s $destdir/${tumor}_vs_${blood}_old_chr$c.vcf ]]; then
+      echo "$destdir/${tumor}_vs_${blood}_old_chr$c.vcf already exists - skipping"
+    else
+      echo "Generating $destdir/${tumor}_vs_${blood}_old_chr$c.vcf"
+      getRunSlot 8
+      GTLdiffCaller -g $T/$R.bin -b <(grep ^chr $bed | cut -f 1-3) -C $c -m $minPct -a -f 0 -r <(cat $BD/chr${c}?_?.gtl) -s <(cat $TD/chr${c}?_?.gtl) -V 3 -O $tumor -N $blood > $destdir/${tumor}_vs_${blood}_old_chr$c.vcf &
+    fi
+  done
+  wait
+
+  pushd $destdir
+  mergeVCFandSelect $bed 0 ${tumor}_vs_${blood}_old >${tumor}_vs_${blood}_old_filt0.vcf
+  annotateVCF -SNP $A ${tumor}_vs_${blood}_old_filt0.vcf >${tumor}_vs_${blood}_old.vcf
+  rm ${tumor}_vs_${blood}_old_chr*.vcf
+  popd
+fi
+
+echo "Completed processing sample $name on `date`"
+exit 0
+
+export GTLBINDIR=/usr/local/bin
+
+samtools ADVIEW -a /data6/b38/GB -G /data6/b38/b38.bin -1 /tmp/toto/FFPE487_b38 -2 /tmp/toto/FFPE487_b38.bam -3 /tmp/toto/TIL487_b38 -4 /tmp/toto/TIL487_b38.bam -c 1 -p 69400 -s <(zgrep -w PASS FFPE487_vs_TIL487_M2.vcf.gz | cut -f 1,2)
+
+$cmd = "bash -c '".__DIR__."/generateScreenDumps.php ".$analysis_id."'";
+
+for f in 483; do ./ExomeUMIdiffCall -d /tmp/toto TIL$f FFPE$f /scratch/chris/LD/xgen-exome-research-panel-v2-targets-hg38.bed; done
+
+for f in 487 504 505 516 542; do ./ExomeUMIdiffCall -d /tmp/toto TIL$f FFPE$f /scratch/chris/LD/xgen-exome-research-panel-v2-targets-hg38.bed; done
+
+cd /tmp/toto/
+samtools ADVIEW -a /data6/b38/GB -G /data6/b38/b38.bin -1 FFPE483_b38 -2 FFPE483_b38.bam -3 TIL483_b38 -4 TIL483_b38.bam -c 1 -p 952430 -s <(genRGBsnp <(zgrep -w PASS FFPE483_vs_TIL483_M2.vcf.gz) <(grep -w PASS FFPE483_vs_TIL483.vcf) <(grep -w PASS FFPE483_vs_TIL483_old.vcf))
