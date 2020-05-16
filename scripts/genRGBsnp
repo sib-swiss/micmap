@@ -1,0 +1,136 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) UNIL - University of Lausanne, Switzerland                 2020  Nicolas Guex
+#  Copyright (C) EPFL - Ecole Polytechnique Fédérale Lausanne, Switzerland  2020  Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+my $yellow = shift @ARGV;
+my $red = shift @ARGV;
+my $blue = shift @ARGV;
+#         unused yellow red  magenta blue cyan white green
+my @C = ( 0,     103,   101, 105,    104, 106, 107,  102   );
+my @O;
+my %C;
+local *FD;
+if ($yellow =~ /\.gz$/) {
+  open FD, "gzip -dc $yellow |" or die "Can't open $yellow : $!";
+} else {
+  open FD, $yellow or die "Can't open $yellow : $!";
+}
+while ( <FD> ) {
+  next if /^#/;
+  s/\s+$//s;
+  my @F = split /\t/;
+  unless (defined $C{$F[0]}) {
+    push @O, $F[0];
+    $C{$F[0]} = {};
+  }
+  my $h = $C{$F[0]};
+  $h->{$F[1]} = 1;
+}
+close FD;
+if ($red =~ /\.gz$/) {
+  open FD, "gzip -dc $red |" or die "Can't open $red : $!";
+} else {
+  open FD, $red or die "Can't open $red : $!";
+}
+while ( <FD> ) {
+  next if /^#/;
+  s/\s+$//s;
+  my @F = split /\t/;
+  unless (defined $C{$F[0]}) {
+    push @O, $F[0];
+    $C{$F[0]} = {};
+  }
+  my $h = $C{$F[0]};
+  if (defined $h->{$F[1]}) {
+    $h->{$F[1]} |= 2;
+  } else {
+    $h->{$F[1]} = 2;
+  }
+}
+close FD;
+if (defined $blue) {
+  if ($blue =~ /\.gz$/) {
+    open FD, "gzip -dc $blue |" or die "Can't open $blue : $!";
+  } else {
+    open FD, $blue or die "Can't open $blue : $!";
+  }
+  while ( <FD> ) {
+    next if /^#/;
+    s/\s+$//s;
+    my @F = split /\t/;
+    unless (defined $C{$F[0]}) {
+      push @O, $F[0];
+      $C{$F[0]} = {};
+    }
+    my $h = $C{$F[0]};
+    if (defined $h->{$F[1]}) {
+      $h->{$F[1]} |= 4;
+    } else {
+      $h->{$F[1]} = 4;
+    }
+  }
+  close FD;
+}
+foreach my $chr (@O) {
+  my $h = $C{$chr};
+  foreach my $pos (sort {$a <=> $b } keys %$h) {
+    my $col = $h->{$pos};
+    $col = 7 if $col == 3 and not defined($blue);
+    printf "%s\t%u\t%u\n", $chr, $pos, $C[$col];
+  }
+}
+exit 0;
+__END__
+==> /dev/fd/63 <==
+##FILTER=<ID=PASS,Description="Site contains at least one allele that passes filters">
+##filtering_status=These calls have been filtered by FilterMutectCalls to label false positives with a list of failed filters and true positives with PASS.
+chr1	952438
+chr1	1327661
+chr1	1374362
+chr1	1398659
+chr1	2503954
+chr1	2587276
+chr1	9922330
+chr1	9922332
+
+==> /dev/fd/62 <==
+chr1	955906
+chr1	1649526
+chr1	4712037
+chr1	9573341
+chr1	10643162
+chr1	11193567
+chr1	13308743
+chr1	15922244
+chr1	18744831
+chr1	21832483
