@@ -1,8 +1,11 @@
 INSTALL (FILES
            annotateVCF
+	   ExomeDiffCall
 	   genRGBsnp
 	   grabAllContacts
 	   grabAllNonContacts
+	   mergeVCFandSelect
+	   mergeVCFdetails
 	   MicMapChIP2bam
 	   MicMapExomeUMI2bam
 	   MicMapHiC2table
