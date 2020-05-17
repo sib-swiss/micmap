@@ -181,48 +181,52 @@ if [[ $run3 -gt 0 ]]; then
     GTLindex -g $HT/$R.bin $BD/chr*.gtl
   fi
 
-  # FIXME - run several in parallel, but check for ressources
-  # FIXME - going below -m 5 seems to break something...
-  for c in `seq 1 24`; do
-    if [[ -s $destdir/${tumor}_vs_${blood}_chr$c.vcf ]]; then
-      echo "$destdir/${tumor}_vs_${blood}_chr$c.vcf already exists - skipping"
-    else
-      echo "Generating $destdir/${tumor}_vs_${blood}_chr$c.vcf"
-      getRunSlot 4
-      GTLdiffCaller3 -g $HT/$R.bin -C $c -f 0 -m 5 -T 3/9 -w 40 -s $bed -r "$BD/chr${c}?_?.gtl" -t "$TD/chr${c}?_?.gtl" > $destdir/${tumor}_vs_${blood}_chr$c.vcf &
-    fi
-  done
-  wait
+  if [[ -s $destdir/${tumor}_vs_${blood}.vcf ]]; then
+    echo "$destdir/${tumor}_vs_${blood}.vcf already exists - skipping"
+  else
+    # FIXME - run several in parallel, but check for ressources
+    # FIXME - going below -m 5 seems to break something...
+    for c in `seq 1 24`; do
+      if [[ -s $destdir/${tumor}_vs_${blood}_chr$c.vcf ]]; then
+	echo "$destdir/${tumor}_vs_${blood}_chr$c.vcf already exists - skipping"
+      else
+	echo "Generating $destdir/${tumor}_vs_${blood}_chr$c.vcf"
+	getRunSlot 4
+	GTLdiffCaller3 -g $HT/$R.bin -C $c -f 0 -m 5 -T 3/9 -w 40 -s $bed -r "$BD/chr${c}?_?.gtl" -t "$TD/chr${c}?_?.gtl" > $destdir/${tumor}_vs_${blood}_chr$c.vcf &
+      fi
+    done
+    wait
 
-  # do a caller3 of each DNA individually
-  for c in `seq 1 24`; do
-    if [[ -s $destdir/${tumor}_chr$c.vcf ]]; then
-      echo "$destdir/${tumor}_chr$c.vcf already exists - skipping"
-    else
-      echo "Generating $destdir/${tumor}_chr$c.vcf"
-      getRunSlot 8
-      GTLcaller3 -g $HT/$R.bin -C $c -f 0 -m 5 -T 3/9 -V $destdir/${tumor}_vs_${blood}_chr$c.vcf -F -W $TD/chr${c}?_?.gtl > $destdir/${tumor}_chr$c.vcf &
-    fi
-  done
-  wait
-  for c in `seq 1 24`; do
-    if [[ -s $destdir/${blood}_chr$c.vcf ]]; then
-      echo "$destdir/${blood}_chr$c.vcf already exists - skipping"
-    else
-      echo "Generating $destdir/${blood}_chr$c.vcf"
-      getRunSlot 8
-      GTLcaller3 -g $HT/$R.bin -C $c -f 0 -m 5 -T 3/9 -V $destdir/${tumor}_vs_${blood}_chr$c.vcf -F -W $BD/chr${c}?_?.gtl > $destdir/${blood}_chr$c.vcf &
-    fi
-  done
-  wait
+    # do a caller3 of each DNA individually
+    for c in `seq 1 24`; do
+      if [[ -s $destdir/${tumor}_chr$c.vcf ]]; then
+	echo "$destdir/${tumor}_chr$c.vcf already exists - skipping"
+      else
+	echo "Generating $destdir/${tumor}_chr$c.vcf"
+	getRunSlot 8
+	GTLcaller3 -g $HT/$R.bin -C $c -f 0 -m 5 -T 3/9 -V $destdir/${tumor}_vs_${blood}_chr$c.vcf -F -W $TD/chr${c}?_?.gtl > $destdir/${tumor}_chr$c.vcf &
+      fi
+    done
+    wait
+    for c in `seq 1 24`; do
+      if [[ -s $destdir/${blood}_chr$c.vcf ]]; then
+	echo "$destdir/${blood}_chr$c.vcf already exists - skipping"
+      else
+	echo "Generating $destdir/${blood}_chr$c.vcf"
+	getRunSlot 8
+	GTLcaller3 -g $HT/$R.bin -C $c -f 0 -m 5 -T 3/9 -V $destdir/${tumor}_vs_${blood}_chr$c.vcf -F -W $BD/chr${c}?_?.gtl > $destdir/${blood}_chr$c.vcf &
+      fi
+    done
+    wait
 
-  pushd $destdir
-  mergeVCFdetails $tumor $blood > ${tumor}_vs_${blood}_merged.vcf
-  annotateVCF -SNP $A ${tumor}_vs_${blood}_merged.vcf >${tumor}_vs_${blood}.vcf
-  rm ${tumor}_vs_${blood}_chr*.vcf
-  rm ${tumor}_chr*.vcf
-  rm ${blood}_chr*.vcf
-  popd
+    pushd $destdir
+    mergeVCFdetails $tumor $blood > ${tumor}_vs_${blood}_merged.vcf
+    annotateVCF -SNP $A ${tumor}_vs_${blood}_merged.vcf >${tumor}_vs_${blood}.vcf
+    rm ${tumor}_vs_${blood}_chr*.vcf
+    rm ${tumor}_chr*.vcf
+    rm ${blood}_chr*.vcf
+    popd
+  fi
 fi
 
 # wget https://storage.googleapis.com/gatk-best-practices/somatic-hg38/af-only-gnomad.hg38.vcf.gz
@@ -241,65 +245,65 @@ if false; then
 fi
 
 pushd $destdir
-# do a Mutect2 analysis
-for c in `seq 1 24`; do
-  if [[ -s ${tumor}_vs_${blood}_M2U_chr$c.vcf ]]; then
-    echo "${tumor}_vs_${blood}_M2U_chr$c.vcf already exists - skipping"
-  else
-    echo "Generating ${tumor}_vs_${blood}_M2U_chr$c.vcf"
-    getRunSlot 8
-    case $c in
-    23) chr=chrX ;;
-    24) chr=chrY ;;
-    *)  chr=chr$c ;;
-    esac
-    gatk Mutect2 -R $T/$R.fa.gz -I $BD.bam -I $TD.bam --normal=$blood --tumor=$tumor -O ${tumor}_vs_${blood}_M2U_chr$c.vcf --germline-resource $T/af-only-gnomad.hg38.vcf.gz --panel-of-normals pon_TIL_6.vcf.gz --f1r2-tar-gz ${tumor}_chr${c}_f1r2.tar.gz -L $chr &
-  fi
-done
-wait
-
-if [[ -s ${tumor}_read-orientation-model.tar.gz ]]; then
-  echo "${tumor}_read-orientation-model.tar.gz already exists"
-else
-  echo "Generating ${tumor}_read-orientation-model.tar.gz"
-  all_f1r2_input=`for c in {1..22}; do printf -- "-I ${tumor}_chr${c}_f1r2.tar.gz "; done`
-  gatk LearnReadOrientationModel $all_f1r2_input -O ${tumor}_read-orientation-model.tar.gz || exit 1
-fi
-
-if [[ -s ${tumor}_getpileupsummaries.table ]]; then
-  echo "${tumor}_getpileupsummaries.table already exists"
-else
-  echo "Generating ${tumor}_getpileupsummaries.table"
-  gatk GetPileupSummaries -I $TD.bam -V $T/small_exac_common_3.hg38.vcf.gz -L $T/small_exac_common_3.hg38.vcf.gz -O ${tumor}_getpileupsummaries.table || exit 1
-fi
-
-if [[ -s ${tumor}_segments.table ]]; then
-  echo "${tumor}_segments.table and ${tumor}_calculatecontamination.table already exist"
-else
-  echo "Generating ${tumor}_segments.table and ${tumor}_calculatecontamination.table"
-  gatk CalculateContamination -I ${tumor}_getpileupsummaries.table -tumor-segmentation ${tumor}_segments.table -O ${tumor}_calculatecontamination.table || exit 1
-fi
-
-if [[ -s ${tumor}_vs_${blood}_M2U.vcf.gz ]]; then
-  echo "${tumor}_vs_${blood}_M2U.vcf.gz already exists"
-else
-  echo "Generating ${tumor}_vs_${blood}_M2U.vcf.gz"
-  all_vcf_input=`for c in {1..24}; do printf -- "-I ${tumor}_vs_${blood}_M2U_chr$c.vcf "; done`
-  gatk MergeVcfs $all_vcf_input -O ${tumor}_vs_${blood}_M2U.vcf.gz || exit 1
-  all_stat_input=`for c in {1..24}; do printf -- "--stats ${tumor}_vs_${blood}_M2U_chr$c.vcf.stats "; done`
-  gatk MergeMutectStats $all_stat_input -O ${tumor}_vs_${blood}_M2U.vcf.gz.stats || exit 1
-fi
-
 if [[ -s ${tumor}_vs_${blood}_M2.vcf.gz ]]; then
   echo "${tumor}_vs_${blood}_M2.vcf.gz already exists"
 else
+  # do a Mutect2 analysis
+  for c in `seq 1 24`; do
+    if [[ -s ${tumor}_vs_${blood}_M2U_chr$c.vcf ]]; then
+      echo "${tumor}_vs_${blood}_M2U_chr$c.vcf already exists - skipping"
+    else
+      echo "Generating ${tumor}_vs_${blood}_M2U_chr$c.vcf"
+      getRunSlot 8
+      case $c in
+      23) chr=chrX ;;
+      24) chr=chrY ;;
+      *)  chr=chr$c ;;
+      esac
+      gatk Mutect2 -R $T/$R.fa.gz -I $BD.bam -I $TD.bam --normal=$blood --tumor=$tumor -O ${tumor}_vs_${blood}_M2U_chr$c.vcf --germline-resource $T/af-only-gnomad.hg38.vcf.gz --panel-of-normals pon_TIL_6.vcf.gz --f1r2-tar-gz ${tumor}_chr${c}_f1r2.tar.gz -L $chr &
+    fi
+  done
+  wait
+
+  if [[ -s ${tumor}_read-orientation-model.tar.gz ]]; then
+    echo "${tumor}_read-orientation-model.tar.gz already exists"
+  else
+    echo "Generating ${tumor}_read-orientation-model.tar.gz"
+    all_f1r2_input=`for c in {1..22}; do printf -- "-I ${tumor}_chr${c}_f1r2.tar.gz "; done`
+    gatk LearnReadOrientationModel $all_f1r2_input -O ${tumor}_read-orientation-model.tar.gz || exit 1
+  fi
+
+  if [[ -s ${tumor}_getpileupsummaries.table ]]; then
+    echo "${tumor}_getpileupsummaries.table already exists"
+  else
+    echo "Generating ${tumor}_getpileupsummaries.table"
+    gatk GetPileupSummaries -I $TD.bam -V $T/small_exac_common_3.hg38.vcf.gz -L $T/small_exac_common_3.hg38.vcf.gz -O ${tumor}_getpileupsummaries.table || exit 1
+  fi
+
+  if [[ -s ${tumor}_segments.table ]]; then
+    echo "${tumor}_segments.table and ${tumor}_calculatecontamination.table already exist"
+  else
+    echo "Generating ${tumor}_segments.table and ${tumor}_calculatecontamination.table"
+    gatk CalculateContamination -I ${tumor}_getpileupsummaries.table -tumor-segmentation ${tumor}_segments.table -O ${tumor}_calculatecontamination.table || exit 1
+  fi
+
+  if [[ -s ${tumor}_vs_${blood}_M2U.vcf.gz ]]; then
+    echo "${tumor}_vs_${blood}_M2U.vcf.gz already exists"
+  else
+    echo "Generating ${tumor}_vs_${blood}_M2U.vcf.gz"
+    all_vcf_input=`for c in {1..24}; do printf -- "-I ${tumor}_vs_${blood}_M2U_chr$c.vcf "; done`
+    gatk MergeVcfs $all_vcf_input -O ${tumor}_vs_${blood}_M2U.vcf.gz || exit 1
+    all_stat_input=`for c in {1..24}; do printf -- "--stats ${tumor}_vs_${blood}_M2U_chr$c.vcf.stats "; done`
+    gatk MergeMutectStats $all_stat_input -O ${tumor}_vs_${blood}_M2U.vcf.gz.stats || exit 1
+  fi
+
   echo "Generating ${tumor}_vs_${blood}_M2.vcf.gz"
   doPad=
   if [[ $padding -gt 0 ]]; then doPad="-ip $padding"; fi
   gatk FilterMutectCalls -R $T/$R.fa.gz -V ${tumor}_vs_${blood}_M2U.vcf.gz --tumor-segmentation ${tumor}_segments.table --contamination-table ${tumor}_calculatecontamination.table --ob-priors ${tumor}_read-orientation-model.tar.gz -L $bed $doPad -O ${tumor}_vs_${blood}_M2.vcf.gz || exit 1
+  rm ${tumor}_vs_${blood}_M2U*
+  rm ${tumor}_chr{?,??}_f1r2.tar.gz
 fi
-rm ${tumor}_vs_${blood}_M2U*
-rm ${tumor}_chr{?,??}_f1r2.tar.gz
 popd
 
 # do an old diffCaller - seems to work more reliably, although yielding many FP

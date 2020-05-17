@@ -37,7 +37,7 @@
 
 	Version information
 
-	Version:	2.0  Dec.  2019 Public release of code under GPL2+ license
+	Version:	2.1  May 2020 Public release of code under GPL2+ license
 
 
  

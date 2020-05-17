@@ -63,6 +63,7 @@ alignconfig=""
 threads=8
 verbose=0
 loop=0
+UMI=0
 
 function usage ()
 {
@@ -92,10 +93,11 @@ function usage ()
   echo " -n <dir>    Number of threads for realignment [$threads]">&2
   echo " -N <dir>    Temporary path [$tempdir]">&2
   echo " -l <int>    loop sorting process up to this number of time to try to fix killed sorting processes issues (0 means disabled) [$loop]">&2
+  echo " -u <int>    reads have UMI of the specified length encoded in their headers (0 means disabled) [$UMI]">&2
   exit 1
 }
 
-while getopts ":s:d:hr:t:SCDm:b:w:c:q:G:T:WA:U:n:N:l:" opt; do
+while getopts ":s:d:hr:t:SCDm:b:w:c:q:G:T:WA:U:n:N:l:u:" opt; do
   case $opt in
     s)
       srcdir=$OPTARG
@@ -159,6 +161,9 @@ while getopts ":s:d:hr:t:SCDm:b:w:c:q:G:T:WA:U:n:N:l:" opt; do
       ;;
     l)
       loop=$OPTARG
+      ;;
+    u)
+      UMI=$OPTARG
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
@@ -384,7 +389,9 @@ if [[ $doSort -ne 0 ]] ; then
       done
       if [[ ${r[$myCPU]} -eq 0 ]] ; then
         memSlot=$(( myCPU / (nbCPU / memRegions) ))
-        numactl --physcpubind=$myCPU --membind=$memSlot $BINDIR/GTLsimpleSort -m $chrMax -z zip -s zip -r <(cat $files) -c $c$mult -o $destdir/${name} &
+	u=
+	if [[ $UMI -gt 0 ]]; then u="-u $UMI"; fi
+        numactl --physcpubind=$myCPU --membind=$memSlot $BINDIR/GTLsimpleSort $u -m $chrMax -z zip -s zip -r <(cat $files) -c $c$mult -o $destdir/${name} &
         r[$myCPU]=$!
         m[$myCPU]=$size
         (( memAvail[memSlot] -= m[myCPU] ))

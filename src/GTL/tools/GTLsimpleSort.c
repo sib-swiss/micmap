@@ -5,8 +5,9 @@
  *      Mapping of short reads in fastq format onto a reference
  *
  *
- *  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
- *  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+ *  Copyright (C) SIB  - Swiss Institute of Bioinformatics,                2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
+ *  Copyright (C) UNIL - University of Lausanne, Switzerland               2019-2020 Nicolas Guex and Christian Iseli
+ *  Copyright (C) EPFL - Ecole Polytechnique Fédérale de Lausanne, Switzerland  2020 Christian Iseli
  *
  *
  *  This program is free software: you can redistribute it and/or modify
@@ -24,7 +25,7 @@
  *
  *
  *      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
- *      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+ *      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@epfl.ch
  *      Repository: https://github.com/sib-swiss/micmap
  *
  * ------------------------------------------------------------------------------------------------------------------------
@@ -33,7 +34,7 @@
 
   This software will sort a GTL file in RAM and write sorted pieces
 
-	(c) N.Guex and C.Iseli 2015
+	(c) N.Guex and C.Iseli 2020
 
 */
 
@@ -826,7 +827,7 @@ main (int argc, char **argv)
 
 	rsltfile[0] = 0;
 	opterr = 0;
-	while ((c = getopt (argc, argv, "c:m:o:r:s:z:M")) != -1)
+	while ((c = getopt (argc, argv, "c:m:o:r:s:u:z:M")) != -1)
 	switch (c)
 	{
 	  case 'c':
@@ -847,6 +848,10 @@ main (int argc, char **argv)
 
 		case 's':
 			gCompress.scoredef = compress_find(optarg);
+			break;
+
+	  case 'u':
+			sscanf(optarg,"%u",&gHasUMI);
 			break;
 
 		case 'z':
@@ -874,9 +879,10 @@ main (int argc, char **argv)
 			printf("                     %11.11s : %s\n", compress_dict[i].name, compress_dict[i].description);
 		printf("           -r resultfile         : name of the result file (produced by match)\n");
 		printf("           -M                    : select multiple matches\n");
+		printf("           -u <int>              : reads have UMI of that length in their header, 0 means no UMI, default is %d\n",gHasUMI);
 		printf("\n");
 		printf(GTL_VERSION_FULL_STRING "\n");
-		printf("(c) Nicolas Guex & Christian Iseli & Thierry Schuepbach & Ivan Topolsky 2015-2018\n");
+		printf("(c) Nicolas Guex & Christian Iseli & Thierry Schuepbach & Ivan Topolsky 2015-2020\n");
 		return(1);
 	}
 

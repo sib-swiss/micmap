@@ -5,8 +5,9 @@
  *      Mapping of short reads in fastq format onto a reference
  *
  *
- *  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
- *  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+ *  Copyright (C) SIB  - Swiss Institute of Bioinformatics,                2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
+ *  Copyright (C) UNIL - University of Lausanne, Switzerland               2019-2020 Nicolas Guex and Christian Iseli
+ *  Copyright (C) EPFL - Ecole Polytechnique Fédérale de Lausanne, Switzerland  2020 Christian Iseli
  *
  *
  *  This program is free software: you can redistribute it and/or modify
@@ -24,7 +25,7 @@
  *
  *
  *      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
- *      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+ *      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@epfl.ch
  *      Repository: https://github.com/sib-swiss/micmap
  *
  * ------------------------------------------------------------------------------------------------------------------------
@@ -33,7 +34,7 @@
  *
  *	The Genomic Transport Layer block routines
  *
- *	(c) N.Guex C.Iseli I.Topolsky D.Zerzion T.Schuepbach 2015
+ *	(c) N.Guex C.Iseli I.Topolsky D.Zerzion T.Schuepbach 2015-2020
  *
  */
 
@@ -70,6 +71,9 @@
 
 //=================================================================================================
 //GTLBUFFERS G;
+
+// global UMI settings
+int gHasUMI; // used for sorting in comparePAIRDATA()
 
 // global compression settings
 compress_t gCompress =
@@ -516,6 +520,12 @@ comparePAIRDATA(const void *a, const void *b)
 	int res = comparePAIRCHRPOSDATA(pda->pcpd,pdb->pcpd);
 	if (res != 0)
 		return res;
+	if (gHasUMI)
+	{
+		res = strncmp(pda->hdr1 + 1,pdb->hdr1 + 1,gHasUMI);
+		if (res != 0)
+			return res;
+	}
 	if (pda->ml[0] < pdb->ml[0])
 		return -1;
 	if (pda->ml[0] > pdb->ml[0])

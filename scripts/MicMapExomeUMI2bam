@@ -46,6 +46,7 @@ destdir=/tmp
 tempdir=/tmp
 tables=/data6
 M=24
+UMI=9
 
 function usage ()
 {
@@ -65,10 +66,11 @@ function usage ()
   echo " -G <name>   read group name in BAM file">&2
   echo " -L <name>   library name in BAM file">&2
   echo " -S <name>   sample name in BAM file">&2
+  echo " -u <int>    length of the UMI fragment [$UMI]">&2
   exit 1
 }
 
-while getopts ":d:hr:t:T:R:G:L:S:" opt; do
+while getopts ":d:hr:t:T:R:G:L:S:u:" opt; do
   case $opt in
     d)
       destdir=$OPTARG
@@ -96,6 +98,9 @@ while getopts ":d:hr:t:T:R:G:L:S:" opt; do
       ;;
     S)
       SM=$OPTARG
+      ;;
+    u)
+      UMI=$OPTARG
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
@@ -176,7 +181,7 @@ else
   MicMap -g $HT/$R.bin -p $HT/start0. -A $M -G 448 -1 <(UMI2fqHeader $f1 $f2) -2 <(UMI2fqHeader $f3 $f2) -r $D
 
   echo "Sorting GTL for sample $SM"
-  sortCompressCall -l 2 -N $tempdir -d $destdir -r $R -D -C $name || exit 1
+  sortCompressCall -l 2 -u $UMI -N $tempdir -d $destdir -r $R -D -C $name || exit 1
   mv $tempdir/${name}_log.txt $destdir
 fi
 
@@ -262,5 +267,3 @@ rm ${name}_nm.bam
 echo "Completed processing sample $name on `date`"
 popd
 exit 0
-
-GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 ChIPseqCTC_Cp190_KO_Cp190_1_dm6 -2 ChIPseqCTC_Cp190_KO_Cp190_1.bam -c 1 -p 18490
