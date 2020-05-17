@@ -192,10 +192,20 @@ decodePair(TLBDATA *tpp, unsigned int i, decodedPair_p_t dpp)
 		dpp->taglen1 = tpp->len[2*i];
 		dpp->taglen2 = tpp->len[2*i+1];
 	}
-	memset(dpp->UMI, 0, 8);
-	// FIXME - very rigid at this point, fixed to 8 nt
-	if (tpp->hdr[9] == ':' && (tpp->hdr[1] == 'A' || tpp->hdr[1] == 'C' || tpp->hdr[1] == 'G' || tpp->hdr[1] == 'T' || tpp->hdr[1] == 'N'))
-		memcpy(dpp->UMI, tpp->hdr + 1, 8);
+	memset(dpp->UMI, 0, UMI_MAX);
+	// detect UMI
+	unsigned int k = 1;
+	while (tpp->hdr[k] == 'A' || tpp->hdr[k] == 'C' || tpp->hdr[k] == 'G' || tpp->hdr[k] == 'T' || tpp->hdr[k] == 'N')
+	{
+		dpp->UMI[0] += 1;
+		dpp->UMI[dpp->UMI[0]] = tpp->hdr[k];
+		k += 1;
+		if (dpp->UMI[0] >= (UMI_MAX - 1))
+			break;
+	}
+	// FIXME - not sure about 6
+	if (tpp->hdr[k] != ':' || dpp->UMI[0] < 6)
+		dpp->UMI[0] = 0;
 	char *next = strchr(tpp->hdr, '\t');
 	tpp->hdr = next + 1;
 	next = strchr(tpp->hdr, '\n');
@@ -830,8 +840,8 @@ decompress(const char * const restrict fn, OPTIONS *opt, coverage_p_t cov, refer
 	unsigned int cpos1 = 0, cpos2 = 0;
 	TLBDATA td;
 	allocBlock(&td, true);
-	unsigned char cUMI[8];
-	memset(cUMI,0,8);
+	unsigned char cUMI[UMI_MAX];
+	memset(cUMI,0,UMI_MAX);
 	while (1) {
 		ssize_t res = read(fd,&th,sizeof(TLBHEADER));
 		if (res == 0)
@@ -924,20 +934,26 @@ decompress(const char * const restrict fn, OPTIONS *opt, coverage_p_t cov, refer
 							if (!opt->noCloneFilter)
 							{
 								// check UMI if we think we have one
-								unsigned int matchedUMI = 0;
-								for (unsigned int k = 0; k < 8; k++)
-									if (cUMI[k] == dp.UMI[k])
-										matchedUMI += 1;
-								if (matchedUMI >= 7 && td.ppd[0][i].tag1pos == cpos1 && tag2pos == cpos2)
+								unsigned int matchedUMI = 1;
+								if (cUMI[0] > 0 && cUMI[0] == dp.UMI[0])
+								{
+									matchedUMI = 0;
+									for (unsigned int k = 1; k <= cUMI[0]; k++)
+										if (cUMI[k] == dp.UMI[k])
+											matchedUMI += 1;
+									if (matchedUMI + 1 < cUMI[0])
+										matchedUMI = 0;
+								}
+								if (matchedUMI != 0 && td.ppd[0][i].tag1pos == cpos1 && tag2pos == cpos2)
 									ignore = 1;
-								if (matchedUMI >= 7 && td.ppd[0][i].tag1pos == cpos2 && tag2pos == cpos1)
+								if (matchedUMI != 0 && td.ppd[0][i].tag1pos == cpos2 && tag2pos == cpos1)
 									ignore = 1;
 							}
 							if (opt->additionalFilter && doFilterPair(diff,mmpos,td.cigar[0],cigarpos))
 								ignore = 1;
 							cpos1 = td.ppd[0][i].tag1pos;
 							cpos2 = tag2pos;
-							memcpy(cUMI, dp.UMI, 8);
+							memcpy(cUMI, dp.UMI, UMI_MAX);
 							unsigned int fragStart = td.ppd[0][i].tag1pos;
 							unsigned int fragEnd = tag2pos + dp.taglen2 - 1;
 							if (dp.reverseTAG1)

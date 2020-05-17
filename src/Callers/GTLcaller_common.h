@@ -50,6 +50,7 @@
 #define kMAXDELTA 15
 #define kMINCOVWIGGLEREPORT 4
 // #define kNOT_ACGT 0xff
+#define UMI_MAX 12
 
 //=================================================================================================
 typedef struct POS_struct {
@@ -97,7 +98,7 @@ typedef struct _decodedPair {
 	int reverseTAG1;
 	int reverseTAG2;
 	int delta;
-	unsigned char UMI[8];
+	unsigned char UMI[UMI_MAX]; // length in first byte
 } decodedPair_t, *decodedPair_p_t;
 
 typedef struct _bt_node_t {
