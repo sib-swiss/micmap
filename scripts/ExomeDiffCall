@@ -74,6 +74,7 @@ function usage ()
   echo " -T <dir>    Temporary path [$tempdir]">&2
   echo " -h          show this usage info and exit">&2
   echo " -P <int>    additional padding around selected intervals [$padding]">&2
+  echo " -p <str>    use specified file as panel of normal (pon) for Mutect2 [$pon]">&2
   exit 1
 }
 
@@ -87,7 +88,7 @@ function getRunSlot ()
   done
 }
 
-while getopts ":d:hr:t:T:P:" opt; do
+while getopts ":d:hr:t:T:P:p:" opt; do
   case $opt in
     d)
       destdir=$OPTARG
@@ -109,6 +110,9 @@ while getopts ":d:hr:t:T:P:" opt; do
       ;;
     P)
       padding=$OPTARG
+      ;;
+    p)
+      pon=$OPTARG
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
@@ -242,6 +246,8 @@ if false; then
   gatk GenomicsDBImport -R /data6/b38/b38.fa.gz -L $bed --genomicsdb-workspace-path pon_db -V TIL483_normal.vcf.gz -V TIL487_normal.vcf.gz -V TIL504_normal.vcf.gz -V TIL505_normal.vcf.gz -V TIL516_normal.vcf.gz -V TIL542_normal.vcf.gz --merge-input-intervals
   gatk CreateSomaticPanelOfNormals -R /data6/b38/b38.fa.gz --germline-resource /data6/b38/af-only-gnomad.hg38.vcf.gz -V gendb://pon_db -O pon_TIL_6.vcf.gz
   rm -rf pon_db
+  # then we can run :
+  # gatk Mutect2 -R $T/$R.fa.gz -I $BD.bam -I $TD.bam --normal=$blood --tumor=$tumor -O ${tumor}_vs_${blood}_M2U_chr$c.vcf --germline-resource $T/af-only-gnomad.hg38.vcf.gz --panel-of-normals pon_TIL_6.vcf.gz --f1r2-tar-gz ${tumor}_chr${c}_f1r2.tar.gz -L $chr &
 fi
 
 pushd $destdir
@@ -260,7 +266,9 @@ else
       24) chr=chrY ;;
       *)  chr=chr$c ;;
       esac
-      gatk Mutect2 -R $T/$R.fa.gz -I $BD.bam -I $TD.bam --normal=$blood --tumor=$tumor -O ${tumor}_vs_${blood}_M2U_chr$c.vcf --germline-resource $T/af-only-gnomad.hg38.vcf.gz --panel-of-normals pon_TIL_6.vcf.gz --f1r2-tar-gz ${tumor}_chr${c}_f1r2.tar.gz -L $chr &
+      parg=
+      if [[ "X$pon" != "X" ]]; then parg="--panel-of-normals $pon"; fi
+      gatk Mutect2 -R $T/$R.fa.gz -I $BD.bam -I $TD.bam --normal=$blood --tumor=$tumor -O ${tumor}_vs_${blood}_M2U_chr$c.vcf --germline-resource $T/af-only-gnomad.hg38.vcf.gz $parg --f1r2-tar-gz ${tumor}_chr${c}_f1r2.tar.gz -L $chr &
     fi
   done
   wait
