@@ -75,7 +75,7 @@ singularity exec -B "/var/lib/hugetlbfs/global,/data6,/scratch/chris" /tmp/MicMa
 
 This is fabricated data using `grep NC_000021_593_9 /data6/b38/mm_RNAseq_clean_b38.txt >/tmp/NC_000021_593_9.txt`
 
-The headers mimic real Illumina data but this is mandatory.
+The headers mimic real Illumina data but this is not mandatory.
 
 ```bash
 cat > /tmp/tst_R1.fq <<EOF
