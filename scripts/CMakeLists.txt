@@ -7,6 +7,7 @@ INSTALL (FILES
 	   mergeVCFandSelect
 	   mergeVCFdetails
 	   MicMapChIP2bam
+	   MicMapExome2bam
 	   MicMapExomeUMI2bam
 	   MicMapHiC2table
 	   MicMapRNA2bam
