@@ -5,7 +5,7 @@
 [This file](https://github.com/sib-swiss/micmap/blob/master/Example.md)
 
 <a href="http://www.youtube.com/watch?feature=player_embedded&v=mmqRlyJq0_c"
-target="_blank"><img src="http://img.youtube.com/vi/mmqRlyJq0_c/0.jpg" 
+target="_blank"><img src="http://img.youtube.com/vi/mmqRlyJq0_c/0.jpg"
 alt="MicMap Setup" width="240" height="180" border="10" /></a>
 
 https://www.youtube.com/watch?v=mmqRlyJq0_c
@@ -85,6 +85,10 @@ singularity exec -B "/var/lib/hugetlbfs/global,/data6,/scratch/chris" /tmp/MicMa
 
 # Very simple example
 
+<a href="http://www.youtube.com/watch?feature=player_embedded&v=qMcAJelsK1s"
+target="_blank"><img src="http://img.youtube.com/vi/qMcAJelsK1s/0.jpg"
+alt="MicMap Simple Example" width="240" height="180" border="10" /></a>
+
 This is fabricated data using `grep NC_000021_593_9 /data6/b38/mm_RNAseq_clean_b38.txt >/tmp/NC_000021_593_9.txt`
 
 The headers mimic real Illumina data but this is not mandatory.
@@ -155,7 +159,7 @@ EOF
 rm /tmp/tst_b38_*
 MicMap -g /var/lib/hugetlbfs/global/pagesize-1GB/b38.bin -p /var/lib/hugetlbfs/global/pagesize-1GB/start0. -d 1 -a 1 -W 1 -w 1 -1 /tmp/tst_R1.fq -2 /tmp/tst_R2.fq -r /tmp/tst_b38
 ls -alth /tmp/|head -20
-cat /tmp/tst_b38_log.txt 
+cat /tmp/tst_b38_log.txt
 
 GTLdecompress -g /data6/b38/b38.bin -r /tmp/tst_b38_A_chr21a.gtl -p -o SAM
 GTLdecompress -g /data6/b38/b38.bin -r /tmp/tst_b38_A_chr21a.gtl -n -o SAM
