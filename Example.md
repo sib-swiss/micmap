@@ -4,6 +4,12 @@
 
 [This file](https://github.com/sib-swiss/micmap/blob/master/Example.md)
 
+<a href="http://www.youtube.com/watch?feature=player_embedded&v=mmqRlyJq0_c"
+target="_blank"><img src="http://img.youtube.com/vi/mmqRlyJq0_c/0.jpg" 
+alt="MicMap Setup" width="240" height="180" border="10" /></a>
+
+https://www.youtube.com/watch?v=mmqRlyJq0_c
+
 # Singularity container
 
 ## Initial empty container
