@@ -40,18 +40,24 @@
 	Version:	2.1  May 2020 Public release of code under GPL2+ license
 
 
- 
+
 ## Build instructions
 
 - need to manually setup the json-c library in third-party subdirectory
 
 ```bash
-cd third-party
-git clone https://github.com/json-c/json-c.git
-cd json-c
-./autogen.sh 
-./configure 
-cd ../..
+mkdir /tmp/tst
+cd /tmp/tst
+git clone git@github.com:sib-swiss/micmap.git
+cd micmap/third-party/
+git clone git@github.com:json-c/json-c.git
+cd json-c/
+mkdir build
+cd build/
+../cmake-configure
+make
+mv * .. # say n to move the existing directories
+cd ../../..
 ```
 
 - create a build directory and build the code
