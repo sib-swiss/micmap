@@ -64,6 +64,7 @@
 #define kMaxTrimPairs 600000000
 // this loads a binary blob output containing the trim data
 #define BIN_OUTPUT
+#define UMI_MAX 12
 
 //=================================================================================================
 
@@ -75,6 +76,7 @@ static VIRTUALCHR virtchr[kMAXCHRcnt];
 static unsigned int statMMpos[256];
 static unsigned int maxMMpos;
 static int gFilterSAM;
+static int gFilterClone;
 
 typedef struct OPTIONS_struct {
 	int fromchr;
@@ -89,6 +91,7 @@ typedef struct OPTIONS_struct {
 	int decompressHalfmapped;
 	int decompressChimeric;
 	int filterSAM;
+	int filterClone;
 } OPTIONS;
 
 typedef struct _decodedSingle {
@@ -119,6 +122,7 @@ typedef struct _decodedPair {
 	char hdr2[kHdrSize];
 	char qual1[kMaxReadLen];
 	char qual2[kMaxReadLen];
+	unsigned char UMI[UMI_MAX]; // length in first byte
 	unsigned int genomepos[kMAXnbMatches];
 	unsigned int mmposStart[kMAXnbMatches];
 	unsigned int cigarposStart[kMAXnbMatches];
@@ -415,8 +419,21 @@ decodeSingle(TLBDATA *tpp, unsigned int i, decodedSingle_p_t dsp, int bamStyle)
 static void
 decodeHeaderPair(TLBDATA *tpp, decodedPair_p_t dpp)
 {
+	memset(dpp->UMI, 0, UMI_MAX);
+	// detect UMI
+	unsigned int k = 1;
+	while (tpp->hdr[k] == 'A' || tpp->hdr[k] == 'C' || tpp->hdr[k] == 'G' || tpp->hdr[k] == 'T' || tpp->hdr[k] == 'N')
+	{
+		dpp->UMI[0] += 1;
+		dpp->UMI[dpp->UMI[0]] = tpp->hdr[k];
+		k += 1;
+		if (dpp->UMI[0] >= (UMI_MAX - 1))
+			break;
+	}
+	// FIXME - not sure about 6
+	if (tpp->hdr[k] != ':' || dpp->UMI[0] < 6)
+		dpp->UMI[0] = 0;
 	char *next = strchr(tpp->hdr, '\t');
-
 	dpp->hlen1 = next - tpp->hdr;
 	memcpy(dpp->hdr1,tpp->hdr,dpp->hlen1);
 	tpp->hdr = next + 1;
@@ -2876,11 +2893,39 @@ output_p(TLBDATA *tpp, int bamStyle, int lowercase, void (*print_single) (TLBDAT
 	{
 		decodedPair_t dp;
 		int i;
+		unsigned int cpos1, cpos2;
+		unsigned char cUMI[UMI_MAX];
+		memset(cUMI,0,UMI_MAX);
 		// decompress and print
 		for (i=0; i<tpp->cnt; i++)
 		{
 			decodePair(tpp,i,&dp,bamStyle);
-			print_pair(tpp,i,&dp);
+			int ignore = 0;
+			// FIXME - maybe should also check same tag lengths...
+			if (gFilterClone)
+			{
+				unsigned int tag2pos = tpp->ppd[0][i].tag1pos + dp.delta[0];
+				// check UMI if we think we have one
+				unsigned int matchedUMI = 1;
+				if (cUMI[0] > 0 && cUMI[0] == dp.UMI[0])
+				{
+					matchedUMI = 0;
+					for (unsigned int k = 1; k <= cUMI[0]; k++)
+						if (cUMI[k] == dp.UMI[k])
+							matchedUMI += 1;
+					if (matchedUMI + 1 < cUMI[0])
+						matchedUMI = 0;
+				}
+				if (matchedUMI != 0 && tpp->ppd[0][i].tag1pos == cpos1 && tag2pos == cpos2)
+					ignore = 1;
+				if (matchedUMI != 0 && tpp->ppd[0][i].tag1pos == cpos2 && tag2pos == cpos1)
+					ignore = 1;
+				cpos1 = tpp->ppd[0][i].tag1pos;
+				cpos2 = tag2pos;
+				memcpy(cUMI, dp.UMI, UMI_MAX);
+			}
+			if (!ignore)
+				print_pair(tpp,i,&dp);
 		}
 	}
 }
@@ -2915,6 +2960,9 @@ output_m(TLBDATA *tpp, int bamStyle, int lowercase, void (*print_single) (TLBDAT
 		decodedPair_t dp;
 		int i;
 		int mmpos[kMAXnbMatches] = { 0 };
+		unsigned int cpos1, cpos2;
+		unsigned char cUMI[UMI_MAX];
+		memset(cUMI,0,UMI_MAX);
 		// decompress and print
 		for (i=0; i<tpp->cnt; i++)
 		{
@@ -2931,7 +2979,32 @@ output_m(TLBDATA *tpp, int bamStyle, int lowercase, void (*print_single) (TLBDAT
 					mmpos[j] += 1;
 				mmpos[j] += 1;
 			}
-			print_pair(tpp,i,&dp);
+			int ignore = 0;
+			// FIXME - maybe should also check same tag lengths...
+			if (gFilterClone)
+			{
+				unsigned int tag2pos = tpp->ppd[0][i].tag1pos + dp.delta[0];
+				// check UMI if we think we have one
+				unsigned int matchedUMI = 1;
+				if (cUMI[0] > 0 && cUMI[0] == dp.UMI[0])
+				{
+					matchedUMI = 0;
+					for (unsigned int k = 1; k <= cUMI[0]; k++)
+						if (cUMI[k] == dp.UMI[k])
+							matchedUMI += 1;
+					if (matchedUMI + 1 < cUMI[0])
+						matchedUMI = 0;
+				}
+				if (matchedUMI != 0 && tpp->ppd[0][i].tag1pos == cpos1 && tag2pos == cpos2)
+					ignore = 1;
+				if (matchedUMI != 0 && tpp->ppd[0][i].tag1pos == cpos2 && tag2pos == cpos1)
+					ignore = 1;
+				cpos1 = tpp->ppd[0][i].tag1pos;
+				cpos2 = tag2pos;
+				memcpy(cUMI, dp.UMI, UMI_MAX);
+			}
+			if (!ignore)
+				print_pair(tpp,i,&dp);
 		}
 	}
 }
@@ -2966,6 +3039,9 @@ output_mN(TLBDATA *tpp, int bamStyle, int lowercase, void (*print_single) (TLBDA
 		decodedPair_t dp;
 		int i;
 		int mmpos[kMAXnbMatches] = { 0 };
+		unsigned int cpos1, cpos2;
+		unsigned char cUMI[UMI_MAX];
+		memset(cUMI,0,UMI_MAX);
 		// decompress and print
 		for (i=0; i<tpp->cnt; i++)
 		{
@@ -2982,7 +3058,32 @@ output_mN(TLBDATA *tpp, int bamStyle, int lowercase, void (*print_single) (TLBDA
 					mmpos[j] += 1;
 				mmpos[j] += 1;
 			}
-			print_pair(tpp,i,&dp);
+			int ignore = 0;
+			// FIXME - maybe should also check same tag lengths...
+			if (gFilterClone)
+			{
+				unsigned int tag2pos = tpp->ppd[0][i].tag1pos + dp.delta[0];
+				// check UMI if we think we have one
+				unsigned int matchedUMI = 1;
+				if (cUMI[0] > 0 && cUMI[0] == dp.UMI[0])
+				{
+					matchedUMI = 0;
+					for (unsigned int k = 1; k <= cUMI[0]; k++)
+						if (cUMI[k] == dp.UMI[k])
+							matchedUMI += 1;
+					if (matchedUMI + 1 < cUMI[0])
+						matchedUMI = 0;
+				}
+				if (matchedUMI != 0 && tpp->ppd[0][i].tag1pos == cpos1 && tag2pos == cpos2)
+					ignore = 1;
+				if (matchedUMI != 0 && tpp->ppd[0][i].tag1pos == cpos2 && tag2pos == cpos1)
+					ignore = 1;
+				cpos1 = tpp->ppd[0][i].tag1pos;
+				cpos2 = tag2pos;
+				memcpy(cUMI, dp.UMI, UMI_MAX);
+			}
+			if (!ignore)
+				print_pair(tpp,i,&dp);
 		}
 	}
 } /* output_fastq_mN */
@@ -3028,6 +3129,9 @@ output_g(TLBDATA *tpp, int bamStyle, int lowercase, void (*print_single) (TLBDAT
 		int i;
 		int mmpos[kMAXnbMatches] = { 0 };
 		int cigarpos[kMAXnbMatches] = { 0 };
+		unsigned int cpos1, cpos2;
+		unsigned char cUMI[UMI_MAX];
+		memset(cUMI,0,UMI_MAX);
 		// decompress and print
 		for (i=0; i<tpp->cnt; i++)
 		{
@@ -3056,7 +3160,32 @@ output_g(TLBDATA *tpp, int bamStyle, int lowercase, void (*print_single) (TLBDAT
 					mmpos[j] += 1;
 				mmpos[j] += 1;
 			}
-			print_pair(tpp,i,&dp);
+			int ignore = 0;
+			// FIXME - maybe should also check same tag lengths...
+			if (gFilterClone)
+			{
+				unsigned int tag2pos = tpp->ppd[0][i].tag1pos + dp.delta[0];
+				// check UMI if we think we have one
+				unsigned int matchedUMI = 1;
+				if (cUMI[0] > 0 && cUMI[0] == dp.UMI[0])
+				{
+					matchedUMI = 0;
+					for (unsigned int k = 1; k <= cUMI[0]; k++)
+						if (cUMI[k] == dp.UMI[k])
+							matchedUMI += 1;
+					if (matchedUMI + 1 < cUMI[0])
+						matchedUMI = 0;
+				}
+				if (matchedUMI != 0 && tpp->ppd[0][i].tag1pos == cpos1 && tag2pos == cpos2)
+					ignore = 1;
+				if (matchedUMI != 0 && tpp->ppd[0][i].tag1pos == cpos2 && tag2pos == cpos1)
+					ignore = 1;
+				cpos1 = tpp->ppd[0][i].tag1pos;
+				cpos2 = tag2pos;
+				memcpy(cUMI, dp.UMI, UMI_MAX);
+			}
+			if (!ignore)
+				print_pair(tpp,i,&dp);
 		}
 	}
 }
@@ -3082,11 +3211,52 @@ output_u(TLBDATA *tpp, int bamStyle, int lowercase, void (*print_single) (TLBDAT
 		decodedPair_t dp;
 		int i;
 		int mmpos = 0;
+		unsigned char cUMI[UMI_MAX];
+		char cTag1[kMaxReadLen];
+		char cTag2[kMaxReadLen];
+		int cTaglen1 = 0;
+		int cTaglen2 = 0;
+		memset(cUMI,0,UMI_MAX);
 		// decompress and print
 		for (i=0; i<tpp->cnt; i++)
 		{
 			mmpos = decodePairUnmapped(tpp,i,&dp,mmpos,bamStyle);
-			print_pair(tpp,i,&dp);
+			int ignore = 0;
+			// FIXME - check identical read sequences here
+			if (gFilterClone)
+			{
+				// check UMI if we think we have one
+				unsigned int matchedUMI = 1;
+				if (cUMI[0] > 0 && cUMI[0] == dp.UMI[0])
+				{
+					matchedUMI = 0;
+					for (unsigned int k = 1; k <= cUMI[0]; k++)
+						if (cUMI[k] == dp.UMI[k])
+							matchedUMI += 1;
+					if (matchedUMI + 1 < cUMI[0])
+						matchedUMI = 0;
+				}
+				if (matchedUMI)
+				{
+					if (dp.taglen1 == cTaglen1
+					    && memcmp(dp.tag1, cTag1, cTaglen1) == 0
+							&& dp.taglen2 == cTaglen2
+					    && memcmp(dp.tag2, cTag2, cTaglen2) == 0)
+						ignore = 1;
+					if (dp.taglen2 == cTaglen1
+					    && memcmp(dp.tag2, cTag1, cTaglen1) == 0
+							&& dp.taglen1 == cTaglen2
+					    && memcmp(dp.tag1, cTag2, cTaglen2) == 0)
+						ignore = 1;
+				}
+				cTaglen1 = dp.taglen1;
+				memcpy(cTag1, dp.tag1, cTaglen1);
+				cTaglen2 = dp.taglen2;
+				memcpy(cTag2, dp.tag2, cTaglen2);
+				memcpy(cUMI, dp.UMI, UMI_MAX);
+			}
+			if (!ignore)
+				print_pair(tpp,i,&dp);
 		}
 	}
 }
@@ -3105,6 +3275,7 @@ decompress(char *fn, OPTIONS *opt)
 	}
 	// FIXME - not all that clean...  no better way yet
 	gFilterSAM = opt->filterSAM;
+	gFilterClone = opt->filterClone;
 	TLBDATA td;
 	allocBlock(&td, true);
 	while (1) {
@@ -3458,7 +3629,7 @@ main (int argc, char **argv)
 #ifdef __APPLE__
 	while ((c = getopt (argc, argv, "r:i:g:C:P:o:v:acdhmnpt:u")) != -1)
 #else
-	while ((c = getopt (argc, argv, "r:i:g:C:P:o:v:acdhmnpt:uR:D:f")) != -1)
+	while ((c = getopt (argc, argv, "r:i:g:C:P:o:v:acdhmnpt:uR:D:fF")) != -1)
 #endif
 	switch (c)
 	{
@@ -3562,6 +3733,10 @@ main (int argc, char **argv)
 			options.filterSAM = 1;
 			break;
 
+		case 'F':
+			options.filterClone = 1;
+			break;
+
 		case '?':
 			break;
 	}
@@ -3610,6 +3785,8 @@ main (int argc, char **argv)
 		printf("           -o outputType         : output type [%s]\n", PrintFuncs[outSelect].name);
 		printf("                                   note: for ADNIview, GTL file needs to be sorted !  only one kind of tag per call !!\n");
 		printf("           -f                    : filter SAM output - do not output pairs that extend beyond reference template\n");
+		printf("           -F                    : filter clones - when multiple read pairs map on the same position, only output the first\n");
+		printf("                                   read pair; takes their UMI into account if they exist\n");
 		printf("           -d                    : debug mode, prints line number of original fastQ input\n");
 		printf("                                   tag1 in stdo tag2 in stderr\n");
 		printf("                                   ./GTLdecompress -r /tmp/test_all.gtl -p -n -m -a -u -h -c -d >r1.fq 2>r2.fq\n");
