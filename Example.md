@@ -10,7 +10,7 @@ alt="MicMap Setup" width="240" height="180" border="10" /></a>
 
 https://www.youtube.com/watch?v=mmqRlyJq0_c
 
-# Singularity container
+#  Background info - singularity container
 
 ## Initial empty container
 
@@ -53,11 +53,24 @@ cd singularity.lang/vim
 make install
 ```
 
+#  Getting started - getting the parts
+
 ## Retrieve container from GitHub
 
 ```bash
-cd /tmp
+rm -rf /tmp/demo
+mkdir /tmp/demo
+cd /tmp/demo
 wget https://github.com/sib-swiss/micmap/releases/download/MicMap_2_20200606/MicMap.sif
+```
+
+## Retrieve reference data
+
+```bash
+cd /tmp/demo
+wget https://bix.unil.ch/ref/b38.tar.xz
+tar xvfJ b38.tar.xz
+rm b38.tar.xz
 ```
 
 ## hugepage setup
@@ -80,7 +93,7 @@ chmod 1777 /var/lib/hugetlbfs/global/pagesize-*
 ```bash
 tmux attach
 screen -UAa
-singularity exec -B "/var/lib/hugetlbfs/global,/data6,/scratch/chris" /tmp/MicMap.sif /bin/bash
+singularity exec -B "/var/lib/hugetlbfs/global" /tmp/demo/MicMap.sif /bin/bash
 ```
 
 # Very simple example
@@ -89,12 +102,14 @@ singularity exec -B "/var/lib/hugetlbfs/global,/data6,/scratch/chris" /tmp/MicMa
 target="_blank"><img src="http://img.youtube.com/vi/qMcAJelsK1s/0.jpg"
 alt="MicMap Simple Example" width="240" height="180" border="10" /></a>
 
-This is fabricated data using `grep NC_000021_593_9 /data6/b38/mm_RNAseq_clean_b38.txt >/tmp/NC_000021_593_9.txt`
+This is fabricated data using `grep NC_000021_593_9 /tmp/demo/b38/mm_RNAseq_clean_b38.txt >/tmp/demo/NC_000021_593_9.txt`
 
 The headers mimic real Illumina data but this is not mandatory.
 
 ```bash
-cat > /tmp/tst_R1.fq <<EOF
+singularity exec -B "/var/lib/hugetlbfs/global" /tmp/demo/MicMap.sif /bin/bash
+
+cat > /tmp/demo/tst_R1.fq <<EOF
 @ST-E00137:143:H2JFTALXX:8:1101:1609:2205p
 CCCAAGGCCATGCCAGCTCAAAGGTGGTGGGATTCCTTGGCGATGTCCCTGAAGCTCTTATTTCCCACTTCGAAAGAACGAAAAGGGTCTGAATTTTATTTACACATGGATTTAGTTTGCT
 +
@@ -125,7 +140,7 @@ GTGTGTGTGTGTGTGTGTGTATACACACACATACACACACATACACACACATACACACACACATACAGTGTGTACACATA
 JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 EOF
 
-cat > /tmp/tst_R2.fq <<EOF
+cat > /tmp/demo/tst_R2.fq <<EOF
 @ST-E00137:143:H2JFTALXX:8:1101:1609:2205p
 ATTAAATGAGGACTTTTTATAAAGGCTAAGTTTGACTCTGGTTAAAAACTTAATCTGGAAGGCAATGCCATATTTGTATAGAACAAGCACACTTAAAATTACACTTTAATATCTATCTCAA
 +
@@ -156,30 +171,32 @@ TGTGTATGTGTGTGTATGTGTTATGTGTGTGTATGTGTGTGTATGTGTACACACTGTATGTGTGTGTGTATGTGTGTGTA
 JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ
 EOF
 
-rm /tmp/tst_b38_*
-MicMap -g /var/lib/hugetlbfs/global/pagesize-1GB/b38.bin -p /var/lib/hugetlbfs/global/pagesize-1GB/start0. -d 1 -a 1 -W 1 -w 1 -1 /tmp/tst_R1.fq -2 /tmp/tst_R2.fq -r /tmp/tst_b38
-ls -alth /tmp/|head -20
-cat /tmp/tst_b38_log.txt
+rm /tmp/demo/tst_b38_*
+rm -f /var/lib/hugetlbfs/global/pagesize-1GB/*
+MicMap -g /tmp/demo/b38/b38.bin -p /tmp/demo/b38/tbl_18nt/start0. -s /var/lib/hugetlbfs/global/pagesize-1GB
+MicMap -g /var/lib/hugetlbfs/global/pagesize-1GB/b38.bin -p /var/lib/hugetlbfs/global/pagesize-1GB/start0. -d 1 -a 1 -W 1 -w 1 -1 /tmp/demo/tst_R1.fq -2 /tmp/demo/tst_R2.fq -r /tmp/demo/tst_b38
+ls -alth /tmp/demo/|head -20
+cat /tmp/demo/tst_b38_log.txt
 
-GTLdecompress -g /data6/b38/b38.bin -r /tmp/tst_b38_A_chr21a.gtl -p -o SAM
-GTLdecompress -g /data6/b38/b38.bin -r /tmp/tst_b38_A_chr21a.gtl -n -o SAM
-GTLdecompress -g /data6/b38/b38.bin -r /tmp/tst_b38_A_chr21a.gtl -m -o SAM
-GTLdecompress -g /data6/b38/b38.bin -r /tmp/tst_b38_A_chr21a.gtl -g -o SAM
-GTLdecompress -g /data6/b38/b38.bin -r /tmp/tst_b38_A_chr21a.gtl -a -o SAM
-GTLdecompress -g /data6/b38/b38.bin -r /tmp/tst_b38_A_C_chr21.gtl -c -o SAM
-GTLdecompress -g /data6/b38/b38.bin -r /tmp/tst_b38_A_HM_chr21.gtl -h -o SAM
-GTLdecompress -g /data6/b38/b38.bin -r /tmp/tst_b38_A_UM_GT.gtl -u -o SAM
+GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_chr21a.gtl -p -o SAM
+GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_chr21a.gtl -n -o SAM
+GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_chr21a.gtl -m -o SAM
+GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_chr21a.gtl -g -o SAM
+GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_chr21a.gtl -a -o SAM
+GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_C_chr21.gtl -c -o SAM
+GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_HM_chr21.gtl -h -o SAM
+GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_UM_GT.gtl -u -o SAM
 
 sortCompressCall -C -D tst_b38
-ls -alth /tmp/|head -20
-ls /tmp/tst_b38
+ls -alth /tmp/demo/|head -20
+ls /tmp/demo/tst_b38
 
-samtools ADVIEW -a /data6/b38/GB -G /data6/b38/b38.bin -1 /tmp/tst_b38 -c 21 -p 42298101
+samtools ADVIEW -a /tmp/demo/b38/GB -G /tmp/demo/b38/b38.bin -1 /tmp/demo/tst_b38 -c 21 -p 42298101
 
-GTLdecompress -g /data6/b38/b38.bin -i /tmp/tst_b38 -C 21 -P 42287101..42308125 -p -o ADNIview
-GTLdecompress -g /data6/b38/b38.bin -i /tmp/tst_b38 -C 21 -P 42287101..42308125 -n -o ADNIview
-GTLdecompress -g /data6/b38/b38.bin -i /tmp/tst_b38 -C 21 -P 42287101..42308125 -m -o ADNIview
-GTLdecompress -g /data6/b38/b38.bin -i /tmp/tst_b38 -C 21 -P 42287101..42308125 -a -o ADNIview
+GTLdecompress -g /tmp/demo/b38/b38.bin -i /tmp/demo/tst_b38 -C 21 -P 42287101..42308125 -p -o ADNIview
+GTLdecompress -g /tmp/demo/b38/b38.bin -i /tmp/demo/tst_b38 -C 21 -P 42287101..42308125 -n -o ADNIview
+GTLdecompress -g /tmp/demo/b38/b38.bin -i /tmp/demo/tst_b38 -C 21 -P 42287101..42308125 -m -o ADNIview
+GTLdecompress -g /tmp/demo/b38/b38.bin -i /tmp/demo/tst_b38 -C 21 -P 42287101..42308125 -a -o ADNIview
 ```
 
 # Grab example from SRA
