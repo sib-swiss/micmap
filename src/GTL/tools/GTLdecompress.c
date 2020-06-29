@@ -6,7 +6,8 @@
  *
  *
  *  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
- *  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+ *  Copyright (C) UNIL - University of Lausanne, Switzerland 2019-2020 Nicolas Guex and Christian Iseli
+ *  Copyright (C) EPFL - Lausanne, Switzerland                    2020 Christian Iseli
  *
  *
  *  This program is free software: you can redistribute it and/or modify
@@ -24,7 +25,7 @@
  *
  *
  *      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
- *      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+ *      Contacts:   Nicolas.Guex@unil.ch and christian.iseli@epfl.ch
  *      Repository: https://github.com/sib-swiss/micmap
  *
  * ------------------------------------------------------------------------------------------------------------------------
@@ -3797,7 +3798,7 @@ main (int argc, char **argv)
 		printf("           -v level              : verbose level\n");
 		printf("\n");
 		printf(GTL_VERSION_FULL_STRING "\n");
-		printf("(c) Nicolas Guex & Christian Iseli & Cie 2014-2019\n");
+		printf("(c) Nicolas Guex & Christian Iseli & Cie 2014-2020\n");
 		return(1);
 	}
 

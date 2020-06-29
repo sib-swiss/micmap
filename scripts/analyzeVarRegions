@@ -1,0 +1,522 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) UNIL - University of Lausanne, Switzerland                 2020  Nicolas Guex
+#  Copyright (C) EPFL - Ecole Polytechnique Fédérale Lausanne, Switzerland  2020  Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+my $minAAlen = 21; # so that we have a chance to get all the peptides
+my $blood = shift @ARGV;
+my $tumor = shift @ARGV;
+my $base = shift @ARGV;
+my $tr = shift @ARGV;
+my $ref = shift @ARGV;
+# need to generate these for each sample, and they are pretty big...
+#my $bloodJF = "/home/nguex/LaurentDerre/micmap.TIL483";
+#my $tumorJF = "/home/nguex/LaurentDerre/micmap.FFPE483";
+my $bloodJF = shift @ARGV;
+my $tumorJF = shift @ARGV;
+my $removeJF = 0;
+# the jellyfish files will be created unless they are provided
+# - if names are provided but do not yet exist as files, they will be created and retained
+# - if nothing is provided, the files will be generated and erased at the end of the run
+die "Usage : $0 <blood> <tumor> <base> <transcripts> <ref> [<bloodJF> <tumorJF>]" unless defined $ref;
+unless (defined($bloodJF) and -s $bloodJF) {
+  $removeJF = 1 unless defined $bloodJF;
+  $bloodJF = "/tmp/micmap.$blood.jf" unless defined $bloodJF;
+  $tumorJF = "/tmp/micmap.$tumor.jf" unless defined $tumorJF;
+  my $refBin = $ref;
+  $refBin =~ s/\.fa\.gz$/.bin/;
+  die "Can't grok $ref" unless $refBin =~ /\/([^\/]+)\.bin$/;
+  my $refName = $1;
+  die "Bad ref $refBin" unless -s $refBin;
+  my $bloodDir = sprintf "%s/%s_%s", $base, $blood, $refName;
+  my $tumorDir = sprintf "%s/%s_%s", $base, $tumor, $refName;
+  die "Bad blood directory $bloodDir" unless -d $bloodDir;
+  die "Bad tumor directory $tumorDir" unless -d $tumorDir;
+  if (-s $bloodJF) {
+    print STDERR "Using existing $bloodJF\n";
+  } else {
+    print STDERR "Generating $bloodJF\n";
+    system "bash -c 'jellyfish count -C -m 48 -o $bloodJF -c 3 -s 10000000 -t 32 -L2 <(GTLdecompress -g $refBin -r <(cat $bloodDir/*.gtl) -F -p -n -m -a -u -h -c -o refless | cut -f3,4 | sed -e \"s/./>A\\n&/1;s/\\t/\\n>B\\n/\")'";
+  }
+  if (-s $tumorJF) {
+    print STDERR "Using existing $tumorJF\n";
+  } else {
+    print STDERR "Generating $tumorJF\n";
+    system "bash -c 'jellyfish count -C -m 48 -o $tumorJF -c 3 -s 10000000 -t 32 -L2 <(GTLdecompress -g $refBin -r <(cat $tumorDir/*.gtl) -F -p -n -m -a -u -h -c -o refless | cut -f3,4 | sed -e \"s/./>A\\n&/1;s/\\t/\\n>B\\n/\")'";
+  }
+  print STDERR "Generating $bloodJF and $tumorJF completed\n";
+}
+my $yellow = sprintf "%s/%s_vs_%s_M2.vcf.gz", $base, $tumor, $blood;
+my $blue = sprintf "%s/%s_vs_%s_old.vcf", $base, $tumor, $blood;
+my %C; # common germline variants
+my %V; # to detect common somatic variants
+my %S; # somatic variant details
+my %R; # genomic reference
+my %aaTable = (
+  "A" => "KNKNTTTTRSRSIIMI",  # AAA AAC ... ATT
+  "C" => "QHQHPPPPRRRRLLLL",  # CAA CAC ... CTT
+  "G" => "EDEDAAAAGGGGVVVV",  # GAA GAC ... GTT
+  "T" => "*Y*YSSSS*CWCLFLF"); # TAA TAC ... TTT
+my %aaIdx = (
+  "AA" => 0,
+  "AC" => 1,
+  "AG" => 2,
+  "AT" => 3,
+  "CA" => 4,
+  "CC" => 5,
+  "CG" => 6,
+  "CT" => 7,
+  "GA" => 8,
+  "GC" => 9,
+  "GG" => 10,
+  "GT" => 11,
+  "TA" => 12,
+  "TC" => 13,
+  "TG" => 14,
+  "TT" => 15);
+local *FD;
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	TIL483	FFPE483
+#chr1	69270	rs201219564	A	G	.	germline	.	GT:DP:AD	1/1:33:1,32	0/0:1:0,1
+open FD, $blue or die "Can't open $blue : $!";
+while ( <FD> ) {
+  last if /^#CHROM/;
+}
+my @F = split /\t/;
+die "Bad VCF $F[9] ne $blood" if $F[9] ne $blood;
+while ( <FD> ) {
+  my @F = split /\t/;
+  # FIXME - only retain first variant in case there are several
+  my $alt = $F[4];
+  $alt =~ s/,.*$//;
+  if ($F[6] eq "PASS") {
+    unless (defined $V{$F[0]}) {
+      $V{$F[0]} = {};
+    }
+    $V{$F[0]}->{$F[1]} = 1;
+    $S{$F[0]} = {} unless defined $S{$F[0]};
+    $S{$F[0]}->{$F[1]} = [ $F[3], $alt ];
+  }
+  my ($GT, $DP, $AD) = split /:/, $F[9];
+  if ($GT eq "0/1" or $GT eq "1/1") {
+    $C{$F[0]} = {} unless defined $C{$F[0]};
+    my @D = split /,/, $AD;
+    $C{$F[0]}->{$F[1]} = [ $F[3], $alt, $GT, $D[0], $D[1] ];
+  }
+}
+close FD;
+open FD, "gzip -dc $yellow |" or die "Can't open $yellow : $!";
+while ( <FD> ) {
+  next if /^#/;
+  my @F = split /\t/;
+  next unless $F[6] eq "PASS";
+  # FIXME - only retain first variant in case there are several
+  my $alt = $F[4];
+  $alt =~ s/,.*$//;
+  unless (defined $V{$F[0]}) {
+    $V{$F[0]} = {};
+  }
+  $V{$F[0]}->{$F[1]} |= 2;
+  $S{$F[0]} = {} unless defined $S{$F[0]};
+  $S{$F[0]}->{$F[1]} = [ $F[3], $alt ];
+}
+close FD;
+open FD, "gzip -dc $ref |" or die "Can't open $ref : $!";
+my $seq;
+my $cur;
+while ( <FD> ) {
+  if (/^>(\S+)/) {
+    $R{$cur} = $seq if defined $cur;
+    undef $seq;
+    undef $cur;
+    if (defined $V{$1}) {
+      $cur = $1;
+      $seq = "";
+    }
+    next;
+  }
+  s/\s+$//s;
+  $seq .= uc $_ if defined $seq;
+}
+$R{$cur} = $seq if defined $cur;
+close FD;
+my $totLines = 0;
+my $curLine = 0;
+my $curPct = -1;
+open FD, $tr or die "Can't open %tr : %!";
+while ( <FD> ) {
+  $totLines += 1;
+}
+close FD;
+open FD, $tr or die "Can't open %tr : %!";
+#5095	1	ENSG00000224051.7	CPTP	protein_coding	NC_000001_88_2	chr1	+	1325236..1325963,1326836..1327032,1327241..1328897	1324756	1328897	2582	CCGGCCCTGACCTTGGGCCGTTGGGCTGCCCTGGGAAAGGCCTGGAGGTGTCCTGGGTCAC...
+my $marker = " " x 47 . "|";
+my $curG;
+my %CG;
+while ( <FD> ) {
+  $curLine += 1;
+  my $pct = int($curLine * 100 / $totLines);
+  if ($pct != $curPct) {
+    $curPct = $pct;
+    printf STDERR "\rProcessing%4d%%", $curPct;
+  }
+  s/\s+$//s;
+  my @F = split /\t/;
+  $curG = $F[0] unless defined $curG;
+  if ($curG != $F[0]) {
+    undef %CG;
+    $curG = $F[0];
+  }
+  my $chr = $F[6];
+  next unless defined $V{$chr};
+  my @E = split /,/, $F[8];
+  my $maxPep = &genPep($F[12]);
+  my $rnaLen = length $F[12];
+  next unless defined($maxPep) and $#$maxPep >= 0;
+  my $curRNApos = 0;
+  foreach my $ex (@E) {
+    my ($p1, $p2) = $ex =~ /^(\d+)\.\.(\d+)$/;
+    my $exonLen = $p2 - $p1 + 1;
+    my $RNAp1 = ($F[7] eq "+") ? $curRNApos : $rnaLen - $curRNApos - 1; # zero based
+    my $RNAp2 = ($F[7] eq "+") ? $curRNApos + $exonLen - 1 : $rnaLen - $exonLen - $curRNApos; # zero based
+    die "\nbug $F[8] $ex" unless defined $p2;
+    for my $i ($p1 .. $p2) {
+      #next unless defined($V{$chr}->{$i}) and $V{$chr}->{$i} == 3;
+      next unless defined($V{$chr}->{$i});
+      my $A = $S{$chr}->{$i};
+      #my $seq = substr $R{$chr}, $i - 2, 3;
+      my $ref = substr $R{$chr}, $i - 48, 95;
+      # what is the difference in length ?
+      my $delta = length($$A[0]) - length($$A[1]);
+      # make sure the alt is not too short after making the change
+      my $alt = substr $R{$chr}, $i - 48, 95 + ($delta > 0 ? $delta : 0);
+      my $repl = substr $alt, 47, length($$A[0]), $$A[1];
+      die "\n$repl ne $$A[0]" if $repl ne $$A[0];
+      # Let's see what variant peptide we might have
+      my $refP;
+      my $altP;
+      if ($delta == 0) {
+	if ($F[7] eq "+") {
+	  # first, see which aa is impacted
+	  my $A0 = $$A[0];
+	  my $A1 = $$A[1];
+	  my $varStart = $RNAp1 + $i - $p1;
+	  my $varEnd = $varStart + length($$A[0]) - 1;
+	  # there can exist several peptides - need to see if we fall within one
+	  my $cp = 0;
+	  while ($cp < $#$maxPep) {
+	    my $pstart = $$maxPep[$cp];
+	    my $pend = $$maxPep[$cp + 1];
+	    if ($pstart <= $varEnd and $varStart <= $pend) {
+	      # determine nt pos to start 10aa before the change
+	      $refP = "";
+	      $altP = "";
+	      my $start = $varStart - 10 * 3;
+	      if ($start < $pstart) {
+		$start = $pstart;
+		$refP = "N-";
+		$altP = "N-";
+	      }
+	      my $d = $start - $pstart;
+	      $start -= $d % 3;
+	      # in case we span the starting ATG
+	      if ($start > $varStart) {
+		my $diff = $start - $varStart;
+		$varStart = $start;
+		$A0 = substr $A0, $diff;
+		$A1 = substr $A1, $diff;
+	      }
+	      my $r = substr $F[12], $start, $minAAlen * 3;
+	      my $a = $r;
+	      my $o = substr $a, $varStart - $start, length($A0), $A1;
+	      die "\n$o ne $A0" if $o ne $A0;
+	      $refP .= &toaa($r, 0);
+	      $altP .= &toaa($a, 0);
+	      last;
+	    }
+	    $cp += 4;
+	  }
+	} else {
+	  # p1        p2   p1              p2
+	  # +----------+   +----------------+
+	  # N                               0
+	  # we have revcomp here...
+	  my $RA0 = reverse $$A[0];
+	  $RA0 =~ tr/ACGT/TGCA/;
+	  my $RA1 = reverse $$A[1];
+	  $RA1 =~ tr/ACGT/TGCA/;
+	  # first, see which aa is impacted
+	  my $varStart = $RNAp1 - $i + $p1 - length($$A[0]) + 1;
+	  my $varEnd = $varStart + length($$A[0]) - 1;
+	  # there can exist several peptides - need to see if we fall within one
+	  my $cp = 0;
+	  while ($cp < $#$maxPep) {
+	    my $pstart = $$maxPep[$cp];
+	    my $pend = $$maxPep[$cp + 1];
+	    if ($pstart <= $varEnd and $varStart <= $pend) {
+	      # determine nt pos to start 10aa before the change
+	      $refP = "";
+	      $altP = "";
+	      my $start = $varStart - 10 * 3;
+	      if ($start < $pstart) {
+		$start = $pstart;
+		$refP = "N-";
+		$altP = "N-";
+	      }
+	      my $d = $start - $pstart;
+	      $start -= $d % 3;
+	      # in case we span the starting ATG
+	      if ($start > $varStart) {
+		my $diff = $start - $varStart;
+		$varStart = $start;
+		$RA0 = substr $RA0, $diff;
+		$RA1 = substr $RA1, $diff;
+	      }
+	      my $r = substr $F[12], $start, $minAAlen * 3;
+	      my $a = $r;
+	      my $o = substr $a, $varStart - $start, length($RA0), $RA1;
+	      die "\n$o ne $RA0" if $o ne $RA0;
+	      $refP .= &toaa($r, 0);
+	      $altP .= &toaa($a, 0);
+	      last;
+	    }
+	    $cp += 4;
+	  }
+	}
+      }
+      next unless defined $refP;
+      my $tag = sprintf "%s:%s", $refP, $altP;
+      my $tagnt = sprintf "%s:%s", $ref, $alt;
+      my @warn;
+      if (defined $CG{$tag}) {
+	next if defined $CG{"$i:$tag"};
+	if (defined $CG{$tagnt}) {
+	  $CG{"$i:$tag"} = $CG{$tag};
+	  push @warn, "'same as $CG{$tag}'";
+	  for my $j (($i - 100) .. ($i + 47)) {
+	    if (defined $C{$chr}->{$j}) {
+	      push @warn, sprintf "'%s %u %s %s %s %u %u'", $chr, $j, @{$C{$chr}->{$j}};
+	    }
+	  }
+	  my $ws = "";
+	  $ws = "\t" . join(";",@warn) if $#warn >= 0;
+	  printf "%u\t%u\t%s\t%u\t%s\t%s\t%u\t%f\t%f\t%f\t%f\t%s\t%s%s\n", $F[0], $F[1], $chr, $i, @$A, $V{$chr}->{$i}, @{$CG{$tagnt}}, $refP, $altP, $ws;
+	  next;
+	}
+	push @warn, "'same aa as $CG{$tag} but diff nt'";
+      }
+      $CG{$tag} = $i unless defined $CG{$tag};
+      $CG{"$i:$tag"} = $CG{$tag};
+      my @refA;
+      my @altA;
+      my $nbProbes = 0;
+      for my $j (0 .. 47) {
+	my $rProbe = substr $ref, $j, 48;
+	my $aProbe = substr $alt, $j, 48;
+	next if $rProbe eq $aProbe;
+	push @refA, $rProbe;
+	push @altA, $aProbe;
+	$nbProbes += 1;
+      }
+      next if $nbProbes == 0;
+      my $lastR = $nbProbes - 1;
+      my $lastA = $nbProbes * 2 - 1;
+      my $segs = join " ", @refA, @altA;
+      my $res = `jellyfish query $bloodJF $segs`;
+      my @L = split /\n/, $res;
+      my $sum = 0;
+      for my $j (0 .. $lastR) {
+	my ($val) = $L[$j] =~ / (\d+)$/;
+	die "\nbad output $j $L[$j]" unless defined $val;
+	$sum += $val;
+      }
+      my $avgRefvsBlood = $sum / $nbProbes;
+      $sum = 0;
+      for my $j ($nbProbes .. $lastA) {
+	my ($val) = $L[$j] =~ / (\d+)$/;
+	die "\nbad output $j $L[$j]" unless defined $val;
+	$sum += $val;
+      }
+      my $avgAltvsBlood = $sum / $nbProbes;
+      $res = `jellyfish query $tumorJF $segs`;
+      @L = split /\n/, $res;
+      $sum = 0;
+      for my $j (0 .. $lastR) {
+	my ($val) = $L[$j] =~ / (\d+)$/;
+	die "\nbad output $j $L[$j]" unless defined $val;
+	$sum += $val;
+      }
+      my $avgRefvsTumor = $sum / $nbProbes;
+      $sum = 0;
+      for my $j ($nbProbes .. $lastA) {
+	my ($val) = $L[$j] =~ / (\d+)$/;
+	die "\nbad output $j $L[$j]" unless defined $val;
+	$sum += $val;
+      }
+      my $avgAltvsTumor = $sum / $nbProbes;
+      $CG{$tagnt} = [ $avgRefvsBlood, $avgAltvsBlood, $avgRefvsTumor, $avgAltvsTumor ];
+      # warn if there are the other variations within +47 and -100 positions
+      for my $j (($i - 100) .. ($i + 47)) {
+	if (defined $C{$chr}->{$j}) {
+	  push @warn, sprintf "'%s %u %s %s %s %u %u'", $chr, $j, @{$C{$chr}->{$j}};
+	}
+      }
+      my $ws = "";
+      $ws = "\t" . join(";",@warn) if $#warn >= 0;
+      printf "%u\t%u\t%s\t%u\t%s\t%s\t%u\t%f\t%f\t%f\t%f\t%s\t%s%s\n", $F[0], $F[1], $chr, $i, @$A, $V{$chr}->{$i}, $avgRefvsBlood, $avgAltvsBlood, $avgRefvsTumor, $avgAltvsTumor, $refP, $altP, $ws;
+    }
+    $curRNApos += $exonLen;
+  }
+}
+close FD;
+print STDERR "\n";
+unlink $bloodJF, $tumorJF if $removeJF != 0;
+exit 0;
+
+sub genPep {
+  my ($seq) = @_;
+  my @M;
+  my $pos = index $seq, "ATG";
+  while ($pos >= 0) {
+    my $aaMax = &toaa($seq, $pos);
+    my $len = length $aaMax;
+    if ($len >= $minAAlen) {
+      my $last = $pos + $len * 3 - 1;
+      if ($#M < 0 or $pos > $M[$#M - 2]) {
+	push @M, $pos, $last, $len, $aaMax;
+      }
+      if ($len > $M[$#M - 1]) {
+	$M[$#M - 3] = $pos;
+	$M[$#M - 2] = $last;
+	$M[$#M - 1] = $len;
+	$M[$#M] = $aaMax;
+      }
+    }
+    $pos = index $seq, "ATG", $pos + 3;
+  }
+  return \@M;
+}
+
+sub na2aa {
+  my ($s) = @_;
+  die "\nBad length $s" if length($s) != 3;
+  my $part = $aaTable{substr $s, 0, 1};
+  my $idx = $aaIdx{substr $s, 1, 2};
+  die "\nBad triplet idx $s" unless defined($part) and defined($idx);
+  return substr $part, $idx, 1;
+}
+
+sub toaa {
+  my ($s, $pos) = @_;
+  my $len = length $s;
+  my $res = "";
+  while ($pos + 2 < $len) {
+    my $aa = &na2aa(substr $s, $pos, 3);
+    $res .= $aa;
+    last if $aa eq "*";
+    $pos += 3;
+  }
+  return $res;
+}
+__END__
+
+genRGBsnp <(zgrep -w PASS FFPE483_vs_TIL483_M2.vcf.gz) <(grep -w PASS FFPE483_vs_TIL483.vcf) <(grep -w PASS FFPE483_vs_TIL483_old.vcf)|grep '10[26]$'|head >/tmp/prepareVarRegions
+chr1	952438	106
+chr1	1327661	106
+chr1	1374362	106
+chr1	2503954	106
+chr1	9922332	106
+chr1	10643162	102
+chr1	12893452	106
+chr1	19104634	106
+chr1	19304287	106
+chr1	26185150	106
+
+gzip -dc FFPE483_vs_TIL483_M2.vcf.gz|perl -ane 'print if $F[1] >= 952000 and $F[1] <= 953000' >>/tmp/prepareVarRegions 
+chr1	952438	.	G	T	.	PASS	AS_FilterStatus=SITE;AS_SB_TABLE=152,124|3,2;DP=282;ECNT=1;GERMQ=93;MBQ=20,20;MFRL=194,181;MMQ=252,250;MPOS=19;NALOD=2.17;NLOD=44.14;POPAF=6.00;ROQ=29;TLOD=8.13	GT:AD:AF:DP:F1R2:F2R1:SB	0/1:78,5:0.083:83:50,2:28,2:43,35,3,2	0/0:198,0:6.681e-03:198:112,0:84,0:109,89,0,0
+chr4	952449	.	A	G	.	base_qual;weak_evidence	AS_FilterStatus=weak_evidence,base_qual;AS_SB_TABLE=46,31|1,3;DP=81;ECNT=1;GERMQ=93;MBQ=20,16;MFRL=229,170;MMQ=252,250;MPOS=55;NALOD=1.71;NLOD=15.35;POPAF=6.00;ROQ=5;TLOD=3.05	GT:AD:AF:DP:F1R2:F2R1:SB	0/1:9,2:0.202:11:5,2:2,0:4,5,1,1	0/0:68,2:0.020:70:29,0:31,0:42,26,0,2
+
+perl -ane 'print if $F[6] eq 'chr1' and $F[9] < 1327661 and $F[10] >= 1327661' /data6/b38/mm_RNAseq_clean_b38.txt >>/tmp/prepareVarRegions 
+5095	1	ENSG00000224051.7	CPTP	protein_coding	NC_000001_88_2	chr1	+	1325236..1325963,1326836..1327032,1327241..1328897	1324756	1328897	2582	CCGGCCCTGACCTTGGGCCGTTGGGCTGCCCTGGGAAAGGCCTGGAGGTGTCCTGGGTCAC...
+5095	2	ENSG00000224051.7	CPTP	protein_coding	ENST00000488011.1	chr1	+	1325236..1325595,1326836..1327032,1327241..1328897	1324756	1328897	2214	CCGGCCCTGACCTTGGGCCGTTGGGCTGCCCTGGGAAAGGCCTGGAGGTGTCC...
+5095	3	ENSG00000224051.7	CPTP	protein_coding	ENST00000343938.9	chr1	+	1324756..1325102,1326836..1327032,1327241..1328897	1324756	1328897	2201	GGGCGGCGGGCGAGGGCGGGGCGAGGGCGGGGCGGTGGGCGGGGACGGGGCCC...
+5095	4	ENSG00000224051.7	CPTP	protein_coding	ENST00000464957.1	chr1	+	1324756..1325102,1327241..1328897	1324756	1328897	2004	GGGCGGCGGGCGAGGGCGGGGCGAGGGCGGGGCGGTGGGCGGGGACGGGGCCCGCACGGCGGCTACGGC...
+
+gzip -dc FFPE483_vs_TIL483_M2.vcf.gz|perl -ane 'print if $F[1] >= 1327000 and $F[1] <= 1328000' >>/tmp/prepareVarRegions 
+chr1	1327454	.	C	T	.	orientation	AS_FilterStatus=SITE;AS_SB_TABLE=34,34|3,1;DP=72;ECNT=1;GERMQ=93;MBQ=20,20;MFRL=148,143;MMQ=254,252;MPOS=52;NALOD=1.45;NLOD=8.12;POPAF=6.00;ROQ=1;TLOD=5.73	GT:AD:AF:DP:F1R2:F2R1:SB	0/1:31,4:0.150:35:14,0:16,3:15,16,3,1	0/0:37,0:0.035:37:21,0:16,0:19,18,0,0
+chr1	1327661	.	G	A	.	PASS	AS_FilterStatus=SITE;AS_SB_TABLE=134,76|1,2;DP=215;ECNT=1;GERMQ=93;MBQ=20,20;MFRL=184,176;MMQ=252,250;MPOS=62;NALOD=2.08;NLOD=35.48;POPAF=6.00;ROQ=8;TLOD=4.95	GT:AD:AF:DP:F1R2:F2R1:SB	0/1:53,3:0.073:56:22,1:30,2:33,20,1,2	0/0:157,0:8.338e-03:157:78,0:79,0:101,56,0,0
+
+perl -ane 'print if $F[1] >= 1327000 and $F[1] <= 1328000' FFPE483_vs_TIL483_old.vcf >>/tmp/prepareVarRegions
+chr1	1327586	rs307349	C	T	.	germline	.	GT:DP:AD	1/1:71:0,71	1/1:40:0,40
+chr1	1327661	.	G	A	.	PASS	SOMATIC	GT:DP:AD	0/0:125:125,0	0/1:42:39,3
+
+==> /tmp/toto/FFPE483_vs_TIL483_old.vcf <==
+##fileformat=VCFv4.1
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	TIL483	FFPE483
+chr1	69270	rs201219564	A	G	.	germline	.	GT:DP:AD	1/1:33:1,32	0/0:1:0,1
+chr1	69511	rs2691305	A	G	.	germline	.	GT:DP:AD	1/1:146:0,146	1/1:31:0,31
+chr1	69897	rs200676709	T	C	.	germline	.	GT:DP:AD	1/1:14:2,12	0/0:0:0,0
+chr1	942451	rs6672356	T	C	.	germline	.	GT:DP:AD	1/1:24:0,24	1/1:5:0,5
+chr1	942951	rs148327885	C	T	.	germline	.	GT:DP:AD	0/1:171:82,89	0/1:37:15,22
+chr1	946247	rs2272757	G	A	.	germline	.	GT:DP:AD	0/1:120:52,68	0/1:33:16,17
+chr1	952421	rs3828047	A	G	.	germline	.	GT:DP:AD	1/1:134:0,134	1/1:45:0,45
+chr1	952438	.	G	T	.	PASS	SOMATIC	GT:DP:AD	0/0:146:146,0	0/1:51:48,3
+chr1	1035285	.	G	C	.	PASS	SOMATIC	GT:DP:AD	0/0:142:142,0	0/1:55:52,3
+
+pccig4007_chris: pwd
+/home/nguex/LaurentDerre
+
+pccig4007_chris: ./jellyfish-2.3.0/bin/jellyfish query micmap.FFPE483 GAAGAGGCAGGAAGAAGAAACACTAAGCAAATAGGGGTAACAAGTATC
+GAAGAGGCAGGAAGAAGAAACACTAAGCAAATAGGGGTAACAAGTATC 55
+
+pccig4007_chris: ./jellyfish-2.3.0/bin/jellyfish query micmap.TIL483 GAAGAGGCAGGAAGAAGAAACACTAAGCAAATAGGGGTAACAAGTATC
+GAAGAGGCAGGAAGAAGAAACACTAAGCAAATAGGGGTAACAAGTATC 21
+
+pccig4007_chris: ./jellyfish-2.3.0/bin/jellyfish query micmap.TIL483 GAAGAGGCAGGAAGAAGAAACACTAAGCAAATAGGGGTAACAAGTATA
+GAAGAGGCAGGAAGAAGAAACACTAAGCAAATAGGGGTAACAAGTATA 0
+
+pccig4007_chris: ./jellyfish-2.3.0/bin/jellyfish query micmap.FFPE483 GAAGAGGCAGGAAGAAGAAACACTAAGCAAATAGGGGTAACAAGTATA
+GAAGAGGCAGGAAGAAGAAACACTAAGCAAATAGGGGTAACAAGTATA 0
+
+jellyfish query /home/nguex/LaurentDerre/micmap.FFPE483 `perl -e 'foreach $s (@ARGV){for $i (0 .. 47){printf "%s ", substr $s, $i, 48}}print "\n"' GACCTGTTTCGTGACATCACTTTCTACGTCTACTTTTCCCTCTTACTCATTCAGCTCGTCTTGTCCTGTTTCTCAGATCGCTCACCCCTGTTCTC GACCTGTTTCGTGACATCACTTTCTACGTCTACTTTTCCCTCTTACTTATTCAGCTCGTCTTGTCCTGTTTCTCAGATCGCTCACCCCTGTTCTC`
+
+jellyfish query /home/nguex/LaurentDerre/micmap.TIL483 `perl -e 'foreach $s (@ARGV){for $i (0 .. 47){printf "%s ", substr $s, $i, 48}}print "\n"' GACCTGTTTCGTGACATCACTTTCTACGTCTACTTTTCCCTCTTACTCATTCAGCTCGTCTTGTCCTGTTTCTCAGATCGCTCACCCCTGTTCTC GACCTGTTTCGTGACATCACTTTCTACGTCTACTTTTCCCTCTTACTTATTCAGCTCGTCTTGTCCTGTTTCTCAGATCGCTCACCCCTGTTCTC`
+
+
+MINCNT=3
+
+SAMPLE=FFPE483 ; time jellyfish count -C -m 48 -o /home/nguex/LaurentDerre/micmap.${SAMPLE} -c 3 -s 10000000 -t 32 -L$MINCNT <( /home/bix/tools/bin/GTLdecompress -r <(cat /tmp/toto/${SAMPLE}_b38/*.gtl) -n -m -a -u -h -c -g /home/bix/b38/b38.bin -o refless | cut -f3,4 | sed -e "s/./>A\n&/1" -e "s/\t/\n>B\n/" )
+
+SAMPLE=TIL483 ; time jellyfish count -C -m 48 -o /home/nguex/LaurentDerre/micmap.${SAMPLE} -c 3 -s 10000000 -t 32 -L1 <( /home/bix/tools/bin/GTLdecompress -r <(cat /tmp/toto/${SAMPLE}_b38/*.gtl) -n -m -a -u -h -c -g /home/bix/b38/b38.bin -o refless  | cut -f3,4 | sed -e "s/./>A\n&/1" -e "s/\t/\n>B\n/" )
+
+time jellyfish count -C -m 48 -o /tmp/micmap.FFPE483 -c 3 -s 10000000 -t 32 -L2 <(GTLdecompress -g /data6/b38/b38.bin -r <(cat /tmp/toto/FFPE483_b38/*.gtl) -F -p -n -m -a -u -h -c -o refless | cut -f3,4 | sed -e "s/./>A\n&/1;s/\t/\n>B\n/")
+time jellyfish count -C -m 48 -o /tmp/micmap.TIL483 -c 3 -s 10000000 -t 32 -L2 <(GTLdecompress -g /data6/b38/b38.bin -r <(cat /tmp/toto/TIL483_b38/*.gtl) -F -p -n -m -a -u -h -c -o refless | cut -f3,4 | sed -e "s/./>A\n&/1;s/\t/\n>B\n/")
+./prepareVarRegions TIL483 FFPE483 /tmp/toto /data6/b38/mm_RNAseq_clean_b38.txt /data6/b38/b38.fa.gz /tmp/micmap.TIL483 /tmp/micmap.FFPE483 >/tmp/483_out22.txt

@@ -6,7 +6,8 @@
  *
  *
  *  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
- *  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+ *  Copyright (C) UNIL - University of Lausanne, Switzerland 2019-2020 Nicolas Guex and Christian Iseli
+ *  Copyright (C) EPFL - Lausanne, Switzerland                    2020 Christian Iseli
  *
  *
  *  This program is free software: you can redistribute it and/or modify
@@ -145,7 +146,7 @@ void __attribute__((noreturn)) usage()
 #endif
 	printf("\n");
 	printf(GTL_VERSION_FULL_STRING "\n");
-	printf("(c) Nicolas Guex, Christian Iseli & Thierry Schuepbach 2014-2019\n");
+	printf("(c) Nicolas Guex, Christian Iseli & Thierry Schuepbach 2014-2020\n");
 	exit(1);
 }
 //---------------------------------------------------------------
@@ -636,7 +637,7 @@ int main (int argc, char *argv[])
 		fprintf(logfile,
 						"*------------------------------------------------------------------------------*\n"
 					  "|                               MICMAP v %i.%i                                   |\n"
-					  "|    (c) 2014-2019  Nicolas Guex, Christian Iseli & Thierry Schuepbach         |\n"
+					  "|    (c) 2014-2020  Nicolas Guex, Christian Iseli & Thierry Schuepbach         |\n"
 					  "*------------------------------------------------------------------------------*\n\n"
 					   GTL_VERSION_FULL_STRING "\n\n", GTL_MAJOR_VERSION, GTL_MINOR_VERSION);
 		printSystemInfo(logfile, &sysInfo);

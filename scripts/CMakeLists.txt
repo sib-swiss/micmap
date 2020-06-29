@@ -1,4 +1,5 @@
 INSTALL (FILES
+	   analyzeVarRegions
            annotateVCF
 	   ExomeDiffCall
 	   genRGBsnp
