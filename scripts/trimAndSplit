@@ -1,0 +1,113 @@
+#!/usr/bin/perl
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+#                                * micmap *
+#      Mapping of short reads in fastq format onto a reference
+#
+#
+#  Copyright (C) UNIL - University of Lausanne, Switzerland                 2020  Nicolas Guex
+#  Copyright (C) EPFL - Ecole Polytechnique Fédérale Lausanne, Switzerland  2020  Christian Iseli
+#
+#
+#  This program is free software: you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License as published by
+#  the Free Software Foundation, either version 2 of the License, or
+#  (at your option) any later version.
+#
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU General Public License for more details.
+#
+#  You should have received a copy of the GNU General Public License
+#  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#
+#      Code:       Christian Iseli
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@epfl.ch
+#      Repository: https://github.com/sib-swiss/micmap
+#
+# ------------------------------------------------------------------------------------------------------------------------
+#
+use strict;
+use warnings;
+my $minlen = 40;
+my $len = shift @ARGV;
+my $read = shift @ARGV;
+my $adapter1 = "AGATCGGAAGAGCACACGTCTGAACTCCAGTCA";
+my $ad10 = substr $adapter1, 0, 6;
+my $ad11 = substr $adapter1, 1, 6;
+my $ad12 = substr $adapter1, 2, 6;
+while ( <> ) {
+  s/ .*$//;
+  print;
+  $_ = <>;
+  s/\s+$//s;
+  my $idx = rindex $_, $ad10;
+  if ($idx < 0) {
+    $idx = rindex $_, $ad11;
+    $idx -= 1;
+  }
+  if ($idx < 0) {
+    $idx = rindex $_, $ad12;
+    $idx -= 2;
+  }
+  #print STDERR "idx is $idx\n";
+  if ($idx >= $minlen) {
+    my $score = 6;
+    my $max = length($_) - $idx;
+    if ($max > $score) {
+      $max = length($adapter1) if length($adapter1) < $max;
+      my $j = 6;
+      for my $i (($idx + 6) .. ($idx + $max)) {
+	my $nt1 = substr $_, $i, 1;
+	my $nt2 = substr $adapter1, $j, 1;
+	#print STDERR "Check $i $j $nt1 $nt2\n";
+	$score += 1 if $nt1 eq $nt2;
+	$j += 1;
+      }
+    }
+    #print STDERR "idx is $idx, score is $score, max is $max\n";
+    if ($score + 2 >= $max) {
+      #print STDERR "Cut : ", substr($_, $idx), "\n";
+      $_ = substr $_, 0, $idx;
+    } else {
+      $idx = -1;
+    }
+  } else {
+    $idx = -1;
+  }
+  if ($idx < 0) {
+    my $i = 5;
+    while ($i > 0) {
+      my $a = substr $adapter1, 0, $i;
+      my $b = substr $_, -$i;
+      if ($a eq $b) {
+	$idx = length($_) - $i;
+	$_ = substr $_, 0, $idx;
+	last;
+      }
+      $i -= 1;
+    }
+  }
+  #print STDERR $_, "\n";
+  if ($read == 2) {
+    $_ = reverse $_;
+    tr/ACGT/TGCA/;
+  }
+  print substr($_,0,$len),"\n";
+  $_ = <>;
+  print;
+  $_ = <>;
+  s/\s+$//s;
+  if ($idx >= $minlen) {
+    $_ = substr $_, 0, $idx;
+  }
+  if ($read == 2) {
+    $_ = reverse $_;
+  }
+  print substr($_,0,$len),"\n";
+}
+exit 0;
+__END__
