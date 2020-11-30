@@ -55,13 +55,13 @@ make install
 
 #  Getting started - getting the parts
 
-## Retrieve container from GitHub
+## Retrieve container
 
 ```bash
 rm -rf /tmp/demo
 mkdir /tmp/demo
 cd /tmp/demo
-wget https://github.com/sib-swiss/micmap/releases/download/MicMap_2_20200606/MicMap.sif
+wget https://bix.unil.ch/ref/MicMap-2.2.sif
 ```
 
 ## Retrieve reference data
@@ -93,7 +93,7 @@ chmod 1777 /var/lib/hugetlbfs/global/pagesize-*
 ```bash
 tmux attach
 screen -UAa
-singularity exec -B "/var/lib/hugetlbfs/global" /tmp/demo/MicMap.sif /bin/bash
+singularity exec -B "/var/lib/hugetlbfs/global" /tmp/demo/MicMap-2.2.sif /bin/bash
 ```
 
 # Very simple example
@@ -107,7 +107,7 @@ This is fabricated data using `grep NC_000021_593_9 /tmp/demo/b38/mm_RNAseq_clea
 The headers mimic real Illumina data but this is not mandatory.
 
 ```bash
-singularity exec -B "/var/lib/hugetlbfs/global" /tmp/demo/MicMap.sif /bin/bash
+singularity exec -B "/var/lib/hugetlbfs/global" /tmp/demo/MicMap-2.2.sif /bin/bash
 
 cat > /tmp/demo/tst_R1.fq <<EOF
 @ST-E00137:143:H2JFTALXX:8:1101:1609:2205p
