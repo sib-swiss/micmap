@@ -187,7 +187,7 @@ GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_C_chr21.gtl -c -o 
 GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_HM_chr21.gtl -h -o SAM
 GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_UM_GT.gtl -u -o SAM
 
-sortCompressCall -C -D tst_b38
+sortCompressCall -s /tmp/demo -d /tmp/demo -t /tmp/demo -C -D tst_b38
 ls -alth /tmp/demo/|head -20
 ls /tmp/demo/tst_b38
 
