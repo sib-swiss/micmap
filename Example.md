@@ -181,7 +181,6 @@ cat /tmp/demo/tst_b38_log.txt
 GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_chr21a.gtl -p -o SAM
 GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_chr21a.gtl -n -o SAM
 GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_chr21a.gtl -m -o SAM
-GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_chr21a.gtl -g -o SAM
 GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_chr21a.gtl -a -o SAM
 GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_C_chr21.gtl -c -o SAM
 GTLdecompress -g /tmp/demo/b38/b38.bin -r /tmp/demo/tst_b38_A_HM_chr21.gtl -h -o SAM
