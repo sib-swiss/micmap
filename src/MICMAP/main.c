@@ -239,6 +239,8 @@ void segfault_handler(int sig) {
   const size_t size = backtrace(array, 32);
 
   // print out all the frames to stderr
+	if (logfile == NULL)
+		logfile = stderr;
   fprintf(logfile, "Error: signal %d:\n", sig);
   backtrace_symbols_fd(array, size, fileno(logfile));
 	time_t t = time(NULL);
@@ -603,13 +605,11 @@ int main (int argc, char *argv[])
 	if (SharedLocation) {
 		if(DecodingTableToRAM(SharedLocation, prefix, NT)) {
 			fputs("Error while loading decoding table to shared memory RAM\n", stderr);
-			fputs("Error while loading decoding table to shared memory RAM\n", logfile);
-			goto bail;
+			exit(1);
 		}
 		if(GenomeToRAM(SharedLocation, Genome.FileName)) {
-				fputs("Error while loading genome to shared memory RAM\n", stderr);
-				fputs("Error while loading genome to shared memory RAM\n", logfile);
-				goto bail;
+			fputs("Error while loading genome to shared memory RAM\n", stderr);
+			exit(1);
 		}
 		exit(0);
 	}
@@ -620,12 +620,15 @@ int main (int argc, char *argv[])
 	if (world_rank == 0)
 #endif
 	{
-		snprintf(ctmp, sizeof(ctmp), "%s_log.txt", rsltfile);
-		logfile = fopen(ctmp, "w");
-		if (logfile == NULL) {
-			fprintf(stderr, "Unable to create log file %s\n", ctmp);
-			exit(1);
-		}
+		if (rsltfile != NULL) {
+			snprintf(ctmp, sizeof(ctmp), "%s_log.txt", rsltfile);
+			logfile = fopen(ctmp, "w");
+			if (logfile == NULL) {
+				fprintf(stderr, "Unable to create log file %s\n", ctmp);
+				exit(1);
+			}
+		} else
+			logfile = stderr;
 
 		signal(SIGSEGV, segfault_handler);
 		signal(SIGINT, segfault_handler);
