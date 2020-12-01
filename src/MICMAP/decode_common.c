@@ -106,14 +106,13 @@ static void * read_buffer(void *arg)
 	}
 	while (total < tap->size) {
 		ssize_t rc;
-		while ((rc = read(fd, tap->bufPtr, 32768)) == -1) {
+		while ((rc = read(fd, tap->bufPtr + total, 32768)) == -1) {
 			if (errno != EINTR && errno != EAGAIN) {
 				fprintf(stderr, "Could not read: %s(%d)\n", strerror(errno), errno);
 				return (void *) 1;
 			}
 		}
 		total += rc;
-		tap->bufPtr += rc;
 	}
 	close(fd);
 	return 0;
@@ -531,6 +530,7 @@ int DecodingTableToRAM(const char * const restrict path, const char * const rest
 			int fd = open(fn, O_EXCL | O_CREAT | O_RDWR, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
 			if (fd < 0) {
 				perror("open");
+				i -= 1;
 				goto bail;
 			}
 			if (ftruncate64(fd, DecodingTableFiles[i].Size)) {

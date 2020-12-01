@@ -226,7 +226,7 @@ int GenomeToRAM(const char * const restrict path, const char * const restrict ge
 		FreeGenome(&lGenome);
 		if (fd > 0) close(fd);
 		if (addr != MAP_FAILED) munmap(addr, GENOME_SIZE);
-		unlink(fn);
+		if (fd > 0) unlink(fn);
 		return 1;
 }
 //---------------------------------------------------------------
