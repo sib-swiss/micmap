@@ -6,10 +6,10 @@ IF (NOT htslib_FOUND)
 	ExternalProject_Add(
 			htslib
 			PREFIX  ${EXTERNAL_INSTALL_LOCATION}/htslib
-			GIT_REPOSITORY https://gitlab.isb-sib.ch/tschuepb/htslib.git
+			GIT_REPOSITORY https://github.com/samtools/htslib.git
 			TIMEOUT 10
 			UPDATE_COMMAND ${GIT_EXECUTABLE} pull
-			CONFIGURE_COMMAND autoreconf && ./configure --disable-lzma --disable-bz2 --disable-libcurl --disable-s3 --disable-gcs
+			CONFIGURE_COMMAND autoheader && autoconf && ./configure --disable-lzma --disable-bz2 --disable-libcurl --disable-s3 --disable-gcs
 			BUILD_COMMAND make -j 4
 			BUILD_IN_SOURCE 1
 			INSTALL_COMMAND ""
