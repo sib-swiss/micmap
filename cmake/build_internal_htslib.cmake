@@ -23,7 +23,7 @@ IF (NOT htslib_FOUND)
 	IF(NOT STANDALONE)
 		SET(HTSLIB_LIBRARIES "${source_dir}/libhts.so;-lz;-lpthread" CACHE STRING "HTS libraries")
 		
-		INSTALL(FILES "${source_dir}/libhts${CMAKE_SHARED_LIBRARY_SUFFIX}" "${source_dir}/libhts${CMAKE_SHARED_LIBRARY_SUFFIX}.2"
+		INSTALL(FILES "${source_dir}/libhts${CMAKE_SHARED_LIBRARY_SUFFIX}" "${source_dir}/libhts${CMAKE_SHARED_LIBRARY_SUFFIX}.3"
 						DESTINATION lib
 						PERMISSIONS OWNER_EXECUTE OWNER_READ OWNER_WRITE
 												GROUP_EXECUTE GROUP_READ 
