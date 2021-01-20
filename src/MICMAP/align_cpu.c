@@ -222,7 +222,7 @@ void* cpuBlockAligners(AlignerBlockArgs_t * const restrict data)
 		data->Pool->num_threads_working++;
 		pthread_mutex_unlock(&(data->Pool->thcount_lock));
 
-		printf("CPU block aligner requesting input buffer %u loading...\n", i); fflush(stdout);
+		printf("CPU block aligner requesting input buffer %u (of %u) loading...\n", i, data->nInputBlock); fflush(stdout);
 		bsem_wait(data->Pool->ToBeAligned_q->has_items);
 		
 		pthread_mutex_lock(&(data->Pool->ToBeAligned_q->rwmutex));
@@ -230,6 +230,7 @@ void* cpuBlockAligners(AlignerBlockArgs_t * const restrict data)
 		pthread_mutex_unlock(&(data->Pool->ToBeAligned_q->rwmutex));
 
 		if (DecoderJob == NULL) {
+			// FIXME - this scenario seems to cause deadlocks down the road...
 			printf("%s: Not enough tags to satisfy %i input buffers\n", __FUNCTION__, data->nInputBlock);
 			Pool.threads_keepalive = 0;
 			bsem_post(data->Pool->ToBeAligned_q->has_items);

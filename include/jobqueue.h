@@ -84,6 +84,7 @@ static INLINE_JOBQUEUE(void) bsem_init(bsem *bsem_p, int value) {
 
 
 /* Reset semaphore to 0 */
+/* FIXME - not sure it is a good idea to re-init the structures here */
 static INLINE_JOBQUEUE(void) bsem_reset(bsem *bsem_p) {
 	bsem_init(bsem_p, 0);
 }
