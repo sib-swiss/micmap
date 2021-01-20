@@ -161,10 +161,16 @@ if [[ ! -s $HT/$R.bin ]]; then
   echo "done"
 fi
 
-echo "Start processing sample $SM on `date`"
-
+sizef1=`stat -c %s $f1`
+if [[ $sizef1 -lt 20000000 ]]; then
+  echo "Start processing small sample $SM on `date`"
+  small=" -a 1 -d 1 -W 1 -w 1"
+else
+  echo "Start processing sample $SM on `date`"
+  small=
+fi
 echo "Running MicMap on paired files $f1 $f2"
-MicMap -g $HT/$R.bin -p $HT/start0. -A $M -G 448 -1 <(gzip -dc $f1 | sed 's/ .*$//') -2 <(gzip -dc $f2 | sed 's/ .*$//') -r $D
+MicMap -g $HT/$R.bin -p $HT/start0. -A $M$small -G 448 -1 <(gzip -dc $f1 | sed 's/ .*$//') -2 <(gzip -dc $f2 | sed 's/ .*$//') -r $D
 
 echo "Sorting GTL for sample $SM"
 sortCompressCall -l 2 -N $tempdir -d $destdir -r $R -D -C $name || exit 1
