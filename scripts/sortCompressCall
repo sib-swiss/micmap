@@ -63,6 +63,7 @@ alignconfig=""
 threads=8
 verbose=0
 loop=0
+lastFailure=0
 UMI=0
 
 function usage ()
@@ -92,7 +93,8 @@ function usage ()
   echo " -U <file>   JSON config file for realignmnt, triggered once provided" >&2
   echo " -n <dir>    Number of threads for realignment [$threads]">&2
   echo " -N <dir>    Temporary path [$tempdir]">&2
-  echo " -l <int>    loop sorting process up to this number of time to try to fix killed sorting processes issues (0 means disabled) [$loop]">&2
+  echo " -l <int>    loop sorting process up to this number of time to try to fix killed sorting processes issues">&2
+  echo "             (0 means disabled, -1 means keep trying while progress is observed) [$loop]">&2
   echo " -u <int>    reads have UMI of the specified length encoded in their headers (0 means disabled) [$UMI]">&2
   exit 1
 }
@@ -424,7 +426,7 @@ if [[ $doSort -ne 0 ]] ; then
 	    echo "  in : $files"
 	    echo "  out : $destdir/${name}/$chr.gtl"
 	    failure=$((failure + 1))
-	    if [[ $loop -gt 0 ]]; then
+	    if [[ $loop -ne 0 ]]; then
 	      echo "=> removing $destdir/${name}/$chr.gtl"
 	      rm -f $destdir/${name}/$chr.gtl
 	    fi
@@ -445,7 +447,7 @@ if [[ $doSort -ne 0 ]] ; then
 	    echo "  in : $files"
 	    echo "  out : $destdir/${name}/$chr.gtl"
 	    failure=$((failure + 1))
-	    if [[ $loop -gt 0 ]]; then
+	    if [[ $loop -ne 0 ]]; then
 	      echo "=> removing $destdir/${name}/$chr.gtl"
 	      rm -f $destdir/${name}/$chr.gtl
 	    fi
@@ -466,7 +468,7 @@ if [[ $doSort -ne 0 ]] ; then
 	    echo "  in : $files"
 	    echo "  out : $destdir/${name}/$chr.gtl"
 	    failure=$((failure + 1))
-	    if [[ $loop -gt 0 ]]; then
+	    if [[ $loop -ne 0 ]]; then
 	      echo "=> removing $destdir/${name}/$chr.gtl"
 	      rm -f $destdir/${name}/$chr.gtl
 	    fi
@@ -487,7 +489,7 @@ if [[ $doSort -ne 0 ]] ; then
 	    echo "  in : $files"
 	    echo "  out : $destdir/${name}/$chr*.gtl"
 	    failure=$((failure + 1))
-	    if [[ $loop -gt 0 ]]; then
+	    if [[ $loop -ne 0 ]]; then
 	      echo "=> removing $destdir/${name}/$chr*.gtl"
 	      rm -f $destdir/${name}/$chr*.gtl
 	    fi
@@ -508,7 +510,7 @@ if [[ $doSort -ne 0 ]] ; then
 	    echo "  in : $files"
 	    echo "  out : $destdir/${name}/$chr*.gtl"
 	    failure=$((failure + 1))
-	    if [[ $loop -gt 0 ]]; then
+	    if [[ $loop -ne 0 ]]; then
 	      echo "=> removing $destdir/${name}/$chr*.gtl"
 	      rm -f $destdir/${name}/$chr*.gtl
 	    fi
@@ -529,7 +531,7 @@ if [[ $doSort -ne 0 ]] ; then
 	    echo "  in : $files"
 	    echo "  out : $destdir/${name}/$chr*.gtl"
 	    failure=$((failure + 1))
-	    if [[ $loop -gt 0 ]]; then
+	    if [[ $loop -ne 0 ]]; then
 	      echo "=> removing $destdir/${name}/$chr*.gtl"
 	      rm -f $destdir/${name}/$chr*.gtl
 	    fi
@@ -543,11 +545,22 @@ if [[ $doSort -ne 0 ]] ; then
       echo -e "\e[1;32mSeems counts match - $totalIn == $totalOut \e[33m:-)\e[0m"
       break
     else
-      echo -e "\e[1;31mWe counted $failure failures :-(\e[0m"
-      if [[ $loop -gt 0 ]]; then
-	loop=$(( loop - 1 ))
+      if [[ $loop -eq -1 ]]; then
+	if [[ $failure -eq $lastFailure ]] ; then
+	  echo -e "\e[1;31mWe counted $failure failures and we already had $lastFailure failures :-(\e[0m"
+	  exit 1
+	else
+	  echo -e "\e[1;33mWe counted $failure failures and had $lastFailure failures before - retrying\e[0m"
+	  lastFailure=$failure
+	fi
       else
-        exit 1
+	if [[ $loop -gt 0 ]]; then
+	  echo -e "\e[1;33mWe counted $failure failures - $loop more retry\e[0m"
+	  loop=$(( loop - 1 ))
+	else
+	  echo -e "\e[1;31mWe counted $failure failures and exhausted repeat count :-(\e[0m"
+	  exit 1
+	fi
       fi
     fi
   done
