@@ -288,22 +288,27 @@ while ( <FD> ) {
       ($tag1pos, $tag2offset, $delta, $rev1, $rev2, $chr2) = &readPP;
       my $MM1 = <FD>; #READ1 62 A END ; READ2 31 N 32 N 52 N 53 N 64 N 65 N END
       if (defined($debug) or not defined($T[$ord])) {
-	my $R1 = $Read1;
-	my $Q1 = $Qual1;
-	if ($Rev1 != $rev1) {
-	  $R1 = reverse $Read1;
-	  $R1 =~ tr/ACGT/TGCA/;
-	  $Q1 = reverse $Qual1;
+	if ($tag1pos + $delta < 0 or $tag1pos + length($Read1) >= $chrLen or $tag1pos + $delta + length($Read2) >= $chrLen) {
+	  # Read pos is 0 or mate is at zero or a negative coordinate... make the pair unmapped for now
+	  # Since this is the second match... just print nothing
+	} else {
+	  my $R1 = $Read1;
+	  my $Q1 = $Qual1;
+	  if ($Rev1 != $rev1) {
+	    $R1 = reverse $Read1;
+	    $R1 =~ tr/ACGT/TGCA/;
+	    $Q1 = reverse $Qual1;
+	  }
+	  my $R2 = $Read2;
+	  my $Q2 = $Qual2;
+	  if ($Rev2 != $rev2) {
+	    $R2 = reverse $Read2;
+	    $R2 =~ tr/ACGT/TGCA/;
+	    $Q2 = reverse $Qual2;
+	  }
+	  printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head1, $flag1, $chrSAM, $tag1pos, $Len1, $tag1pos + $delta, $ilen, $R1, $Q1;
+	  printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head2, $flag2, $chrSAM, $tag1pos + $delta, $Len2, $tag1pos, - $ilen, $R2, $Q2;
 	}
-	my $R2 = $Read2;
-	my $Q2 = $Qual2;
-	if ($Rev2 != $rev2) {
-	  $R2 = reverse $Read2;
-	  $R2 =~ tr/ACGT/TGCA/;
-	  $Q2 = reverse $Qual2;
-	}
-	printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head1, $flag1, $chrSAM, $tag1pos, $Len1, $tag1pos + $delta, $ilen, $R1, $Q1;
-	printf "%s\t%d\t%s\t%u\t254\t%uM\t=\t%u\t%d\t%s\t%s\n", $Head2, $flag2, $chrSAM, $tag1pos + $delta, $Len2, $tag1pos, - $ilen, $R2, $Q2;
       }
     }
   } elsif ($_ eq "flagPairPos flagMismatch flagCigar") {
