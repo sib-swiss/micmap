@@ -193,13 +193,13 @@ if [[ "X$name" = "X" ]] ; then
   usage
 fi
 if [[ $doSort -ne 0 ]] ; then
+  nbSocket=`lscpu | grep ^Socket | sed 's/^.*:  *//'`
+  nbCores=`lscpu | grep ^Core | sed 's/^.*:  *//'`
+  nbCPU=$(( nbSocket * nbCores ))
+  memRegions=`numactl -s | grep membind | sed 's/^membind: *//' | wc -w`
+  memTotalkB=`cat /proc/meminfo | grep ^MemTotal | awk '{print $2}'`
   while true ; do
-    nbSocket=`lscpu | grep ^Socket | sed 's/^.*:  *//'`
-    nbCores=`lscpu | grep ^Core | sed 's/^.*:  *//'`
-    nbCPU=$(( nbSocket * nbCores ))
     [ -d $destdir/${name} ] || mkdir -p $destdir/${name} || exit 1
-    memRegions=`numactl -s | grep membind | sed 's/^membind: *//' | wc -w`
-    memTotalkB=`cat /proc/meminfo | grep ^MemTotal | awk '{print $2}'`
     for (( i = 0 ; i < memRegions ; i += 1 )) ; do
       memAvail[$i]=$(( memTotalkB / memRegions ))
     done
@@ -324,84 +324,89 @@ if [[ $doSort -ne 0 ]] ; then
 	  size=`echo "$s $o" | dc`
 	  ;;
       esac
-      # see how much kB are needed to process this file.  We assume ratio times size of file
-      size=$(( size / 1024 * ratio ))
-      myCPU=$nbCPU
-      # see if we have a free CPU and enough memory
-      while [[ $myCPU -eq $nbCPU ]] ; do
-        runlist=`jobs -l | grep Running | awk '{print $2}'`
-        if [[ "X$runlist" == "X" ]] ; then
-	  running=0
-	  myCPU=0
+      if [[ $nbCPU -gt 1 ]]; then
+	# see how much kB are needed to process this file.  We assume ratio times size of file
+	size=$(( size / 1024 * ratio ))
+	myCPU=$nbCPU
+	# see if we have a free CPU and enough memory
+	while [[ $myCPU -eq $nbCPU ]] ; do
+	  runlist=`jobs -l | grep Running | awk '{print $2}'`
+	  if [[ "X$runlist" == "X" ]] ; then
+	    running=0
+	    myCPU=0
+	    for (( i = 0 ; i < $nbCPU ; i += 1 )) ; do
+	      if [[ ${r[$i]} -ne 0 ]] ; then
+		memSlot=$(( i / (nbCPU / memRegions) ))
+		(( memAvail[memSlot] += m[i] ))
+		echo; echo "job ${r[$i]} in slot $i is done; freeing ${m[$i]} kB RAM to ${memAvail[$memSlot]}"
+		r[$i]=0
+		m[$i]=0
+	      fi
+	    done
+	    break
+	  fi
+	  for (( i = 0 ; i < nbCPU ; i += 1 )) ; do
+	    s[$i]=0
+	  done
+	  seen=0
+	  for j in $runlist; do
+	    for (( i = 0 ; i < $nbCPU ; i += 1 )) ; do
+	      if [[ ${r[$i]} -eq $j ]] ; then
+		#echo "job $j in slot $i is still running"
+		s[$i]=1
+		(( seen += 1 ))
+		break
+	      fi
+	    done
+	  done
+	  if [[ $seen -eq $nbCPU ]] ; then
+	    sleep 2
+	    continue
+	  fi
 	  for (( i = 0 ; i < $nbCPU ; i += 1 )) ; do
-	    if [[ ${r[$i]} -ne 0 ]] ; then
+	    if [[ ${s[$i]} -eq 0 && ${r[$i]} -ne 0 ]] ; then
 	      memSlot=$(( i / (nbCPU / memRegions) ))
 	      (( memAvail[memSlot] += m[i] ))
 	      echo; echo "job ${r[$i]} in slot $i is done; freeing ${m[$i]} kB RAM to ${memAvail[$memSlot]}"
 	      r[$i]=0
 	      m[$i]=0
+	      (( running -= 1 ))
 	    fi
 	  done
-	  break
-        fi
-        for (( i = 0 ; i < nbCPU ; i += 1 )) ; do
-	  s[$i]=0
-        done
-        seen=0
-        for j in $runlist; do
-	  for (( i = 0 ; i < $nbCPU ; i += 1 )) ; do
-	    if [[ ${r[$i]} -eq $j ]] ; then
-	      #echo "job $j in slot $i is still running"
-	      s[$i]=1
-	      (( seen += 1 ))
+	  # determine if a memory region has enough space and a free slot
+	  for (( i = 0 ; i < nbCPU ; i += 1 )) ; do
+	    memSlot=$(( i / (nbCPU / memRegions) ))
+	    if [[ ${memAvail[$memSlot]} -lt $size ]] ; then
+	      continue
+	    fi
+	    if [[ ${r[$i]} -eq 0 ]] ; then
+	      myCPU=$i
+	      echo; echo "selecting slot $i for $size < ${memAvail[$memSlot]}"
 	      break
 	    fi
 	  done
-        done
-        if [[ $seen -eq $nbCPU ]] ; then
-	  sleep 2
-	  continue
-        fi
-        for (( i = 0 ; i < $nbCPU ; i += 1 )) ; do
-	  if [[ ${s[$i]} -eq 0 && ${r[$i]} -ne 0 ]] ; then
-	    memSlot=$(( i / (nbCPU / memRegions) ))
-	    (( memAvail[memSlot] += m[i] ))
-	    echo; echo "job ${r[$i]} in slot $i is done; freeing ${m[$i]} kB RAM to ${memAvail[$memSlot]}"
-	    r[$i]=0
-	    m[$i]=0
-	    (( running -= 1 ))
+	  # sleep a few seconds if we have not found a slot
+	  if [[ $myCPU -eq $nbCPU ]] ; then
+	    sleep 2
 	  fi
-        done
-        # determine if a memory region has enough space and a free slot
-        for (( i = 0 ; i < nbCPU ; i += 1 )) ; do
-	  memSlot=$(( i / (nbCPU / memRegions) ))
-	  if [[ ${memAvail[$memSlot]} -lt $size ]] ; then
-	    continue
-	  fi
-	  if [[ ${r[$i]} -eq 0 ]] ; then
-	    myCPU=$i
-	    echo; echo "selecting slot $i for $size < ${memAvail[$memSlot]}"
-	    break
-	  fi
-        done
-        # sleep a few seconds if we have not found a slot
-        if [[ $myCPU -eq $nbCPU ]] ; then
-	  sleep 2
-        fi
-      done
-      if [[ ${r[$myCPU]} -eq 0 ]] ; then
-        memSlot=$(( myCPU / (nbCPU / memRegions) ))
-	u=
-	if [[ $UMI -gt 0 ]]; then u="-u $UMI"; fi
-        numactl --physcpubind=$myCPU --membind=$memSlot $BINDIR/GTLsimpleSort $u -m $chrMax -z zip -s zip -r <(cat $files) -c $c$mult -o $destdir/${name} &
-        r[$myCPU]=$!
-        m[$myCPU]=$size
-        (( memAvail[memSlot] -= m[myCPU] ))
-        echo "Started $f in slot $myCPU as ${r[$myCPU]} physCPU=$myCPU memRegion=$memSlot size=$size kB ; remains ${memAvail[$memSlot]}"
-        (( running += 1 ))
+	done
+	if [[ ${r[$myCPU]} -eq 0 ]] ; then
+	  memSlot=$(( myCPU / (nbCPU / memRegions) ))
+	  u=
+	  if [[ $UMI -gt 0 ]]; then u="-u $UMI"; fi
+	  numactl --physcpubind=$myCPU --membind=$memSlot $BINDIR/GTLsimpleSort $u -m $chrMax -z zip -s zip -r <(cat $files) -c $c$mult -o $destdir/${name} &
+	  r[$myCPU]=$!
+	  m[$myCPU]=$size
+	  (( memAvail[memSlot] -= m[myCPU] ))
+	  echo "Started $f in slot $myCPU as ${r[$myCPU]} physCPU=$myCPU memRegion=$memSlot size=$size kB ; remains ${memAvail[$memSlot]}"
+	  (( running += 1 ))
+	else
+	  echo "HWHAP: $myCPU should be an empty slot..."
+	  exit 1
+	fi
       else
-        echo "HWHAP: $myCPU should be an empty slot..."
-        exit 1
+	echo "Sorting $f"
+	$BINDIR/GTLsimpleSort $u -m $chrMax -z zip -s zip -r <(cat $files) -c $c$mult -o $destdir/${name}
       fi
     done
     wait
@@ -541,14 +546,25 @@ if [[ $doSort -ne 0 ]] ; then
 	  ;;
       esac
     done
+    if [[ $totalIn -eq 0 ]] ; then
+      echo -e "\e[1;31mThe total number of input is 0, something seems wrong\e[0m"
+      exit 1
+    fi
     if [[ $failure -eq 0 ]] ; then
       echo -e "\e[1;32mSeems counts match - $totalIn == $totalOut \e[33m:-)\e[0m"
       break
     else
       if [[ $loop -eq -1 ]]; then
 	if [[ $failure -eq $lastFailure ]] ; then
-	  echo -e "\e[1;31mWe counted $failure failures and we already had $lastFailure failures :-(\e[0m"
-	  exit 1
+	  if [[ $failure -eq $lastFailure && $nbCPU -gt 1 ]] ; then
+	    echo -e "\e[1;33mWe still counted $failure, as before - retrying with only 1 thread\e[0m"
+	    nbCPU=1
+	    memRegions=1
+	    memAvail[0]=$memTotalkB
+	  else
+	    echo -e "\e[1;31mWe counted $failure failures and we already had $lastFailure failures :-(\e[0m"
+	    exit 1
+	  fi
 	else
 	  echo -e "\e[1;33mWe counted $failure failures and had $lastFailure failures before - retrying\e[0m"
 	  lastFailure=$failure
