@@ -74,9 +74,16 @@
 //=================================================================================================
 #include "AnalyzeTags.h"
 
+#ifdef DEBUG_INFO
+unsigned int longuestAllowedDeletion = 2000;
+int verbose = 0;
+#endif
+
 //=================================================================================================
 static threadpool_t * restrict IntervalResultsPool = NULL;
+#ifndef DEBUG_INFO
 static int verbose = 0;
+#endif
 
 //=================================================================================================
 OPTIONS options = {

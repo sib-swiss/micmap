@@ -66,9 +66,9 @@
 		unsigned int count;
 	} * restrict Deletions = NULL;
 #ifdef ANALYZE_FULL_OUTPUT
-	unsigned short int * restrict RegionsStat = NULL; 
+	unsigned short int * restrict RegionsStat = NULL;
 #endif
-		
+
 	size_t PFResults_size = 0UL;
 	size_t TransposePFResults_size = 0UL;
 	size_t score_size = 0UL;
@@ -80,12 +80,12 @@
 #ifdef ANALYZE_FULL_OUTPUT
 	size_t RegionsStat_Size = 0UL;
 #endif
-	
+
 	struct Profile profile;
 	char ProfileName[128];
 	char Allele0[MAX_ALLELE_SIZE], Allele1[MAX_ALLELE_SIZE];
 	unsigned char Indices[kMaxReadLen+1];
-	
+
 	unsigned int nRecords=0U, nRecordsOK=0U;
 
 #if TAG_ANALYSIS_MODE == NIRVANA
@@ -134,7 +134,9 @@
 				GTLRawData_t ** ND = (GTLRawData_t **) task->data;
 				const unsigned int nTags = task->count;
 				assert(nTags >= 4);
-// 				printf("ANA: GOT %u tags for %u-%u\n", nTags,  task->GenomeStart, task->GenomeEnd);
+#ifdef DEBUG_INFO
+ 				printf("ANA: GOT %u tags for %u-%u\n", nTags,  task->GenomeStart, task->GenomeEnd);
+#endif
 				unsigned int minPos = -1;
 				unsigned int maxPos = 0U;
 				for (unsigned int iTag=0U; iTag<nTags; iTag++) {
@@ -143,10 +145,10 @@
 					uitmp += ND[iTag]->AlignmentRange[1];
 					if (uitmp > maxPos) maxPos = uitmp;
 				}
-				
+
 				/* Extra margin of both sides of 2 DNA bases */
 				maxPos += 2;
-				
+
 				assert(maxPos > minPos);
 				assert(minPos <= task->GenomeEnd);
 				assert(maxPos >= task->GenomeStart);
@@ -252,7 +254,7 @@
 
 #ifdef DEBUG_INFO
 					fprintf(stderr, "\n\n%12lu   ", 0UL);
-					for (unsigned int l=0; l<Length; l++) { 
+					for (unsigned int l=0; l<Length; l++) {
 						int c = ' ';
 						if (Deletions[l].Length > 0 && Insertions[l] > 0) c = (int) '*';
 						else if (Deletions[l].Length > 0) c = (int) '-';
@@ -261,7 +263,7 @@
 					}
 					fputc('\n', stderr);
 #endif
-					
+
 					TotalLength = Length;
 					for (unsigned int k=0; k<Length; k++) TotalLength += Memory[k];
 
@@ -285,7 +287,7 @@
 							*cptro++ = *cptr++;
 							k++;
 						}
-// 						while (++k < TotalLength) { 
+// 						while (++k < TotalLength) {
 // 							assert((uintptr_t) cptro <= (uintptr_t) &GenomeBuffer[TotalLength-1]);
 // 							*cptro++ = *cptr++;
 // 						}
@@ -368,7 +370,7 @@
 										{
 											while (count<N) {
 												Buffer[nTags*space+iTag] = (*cptr++);
-												space++; 
+												space++;
 												count++;
 											}
 											HasGap = true;
@@ -381,7 +383,7 @@
 						else {
 							unsigned int count = 0U;
 							while (count <= GD->AlignmentRange[1]) {
-								if (GenomeBuffer[space] == ' ') 
+								if (GenomeBuffer[space] == ' ')
 									Buffer[nTags*space+iTag] = ' ';
 								else {
 									Buffer[nTags*space+iTag] = (*cptr++);
@@ -445,6 +447,7 @@
 					        fprintf(stderr, "%12lu %c ", ND[iTag]->Ordinal,(ND[iTag]->revNmer) ? '<' : '>');
 					        _Bool In = false;
 									static const char *keys[] = {" ", ".", "_", "\033[32m+\033[0m", "\033[31m-\033[0m" };
+									static const char *mods[] = {"\033[36mA\033[0m", "\033[31mC\033[0m", "\033[35mG\033[0m", "\033[33mT\033[0m" };
 					        for (int j=0; j<TotalLength; j++) {
 					            const char * restrict ptr;
 					            if (Buffer[j*nTags+iTag] == '.' && In)
@@ -455,8 +458,16 @@
 					            case '.': ptr = keys[0]; break;
 					            case ' ': ptr = (GenomeBuffer[j] == ' ') ? ( In ? keys[1] : keys[0]) : keys[0]; break;
 					            case '-': ptr = keys[4]; break;
+											case 'A':
+					                ptr = (GenomeBuffer[j] == ' ') ? keys[3] : (GenomeBuffer[j] == Buffer[j*nTags+iTag]) ? keys[2] : mods[0]; break;
+											case 'C':
+					                ptr = (GenomeBuffer[j] == ' ') ? keys[3] : (GenomeBuffer[j] == Buffer[j*nTags+iTag]) ? keys[2] : mods[1]; break;
+											case 'G':
+					                ptr = (GenomeBuffer[j] == ' ') ? keys[3] : (GenomeBuffer[j] == Buffer[j*nTags+iTag]) ? keys[2] : mods[2]; break;
+											case 'T':
+					                ptr = (GenomeBuffer[j] == ' ') ? keys[3] : (GenomeBuffer[j] == Buffer[j*nTags+iTag]) ? keys[2] : mods[3]; break;
 					            default:
-					                ptr = (GenomeBuffer[j] == ' ' ) ? keys[3] : keys[2];
+					                ptr = (GenomeBuffer[j] == ' ') ? keys[3] : keys[2];
 					            }
 					            fputs(ptr, stderr);
 					        }
@@ -489,7 +500,7 @@
 						WindowLength = WindowStop - WindowStart - 1; // (WindowStop-1) - WindowStart + 1;
 						assert(WindowLength > 0);
 					}
-					
+
 					///////////////////////////////////////////////////////////////////////////////////////////////////
 					// Realign everyone or not
 					///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -599,7 +610,7 @@
 							if (WindowStart+WindowLength > TotalLength) {
 								fprintf(stderr, "OOPS: total length (%u) < WindowStart (%lu) + WindowLength (%lu) genome start (%u) minpos (%u) genome end (%u) maxpos (%u)\nGEN: %.*s\n",
 								        TotalLength, WindowStart, WindowLength, task->GenomeStart, minPos,
-								        task->GenomeEnd, maxPos, (int) TotalLength, GenomeBuffer); 
+								        task->GenomeEnd, maxPos, (int) TotalLength, GenomeBuffer);
 								assert(0);
 							}
 #endif
@@ -667,7 +678,7 @@
 										DeletionEnd = 1;
 										DeletionStarted = 0;
 									}
-									
+
 									/* Looking for genome deletion */
 									unsigned char BeginDeletion = 0;
 									unsigned char FavorMatch = 0;
@@ -684,7 +695,7 @@
 										if (column[j] == '-') HasDeletion = 1;
  										else if (previousColumn && (previousColumn[j] == '-')) IntermediateDeletionEnd = 1;
  									}
- 									
+
 									fputs("MA   /I: ", out);
 									if (DeletionEnd || IntermediateDeletionEnd) fputs("DM=0; ", out);
 									if (DeletionStarted) fputs("DD=0; ", out);
@@ -694,11 +705,11 @@
 									}
 
 									//if (InsertionStarted) fputs(" DM=1; DD=0; ", out);
-									if (InsertionStarted) { 
+									if (InsertionStarted) {
 										fputs("IM=2; DM=0; ", out);
 										if (DeletionStarted) FavorMatch = 1;
 									}
-									
+
 									fprintf(out,"MI=%i; I=%i,%i,%i,%i,%i;\n", NLOW, NLOW, NLOW, NLOW, NLOW, NLOW);
 
 									InsertionStarted = 0;
@@ -731,7 +742,7 @@
 											if (DNAAlphabet[0] == value) Bases[0] = 3;
 											if (DNAAlphabet[1] == value) Bases[1] = 3;
 											if (DNAAlphabet[2] == value) Bases[2] = 3;
-											if (DNAAlphabet[3] == value) Bases[3] = 3;									
+											if (DNAAlphabet[3] == value) Bases[3] = 3;
 										}
 									}
 
@@ -740,10 +751,10 @@
 // 										for (int j=0; j<nTags; j++) fputc((int) column[j], stdout);
 // 										fputs("\'\n", stdout);
 // 									}
-									if (!InsertionStarted) fputs("CC   STARTING TAGS INSERTIONS\n", out); 
+									if (!InsertionStarted) fputs("CC   STARTING TAGS INSERTIONS\n", out);
 
 									fprintf(out, "MA   /I: BI=0; BM=%i; BD=%i; MM=%i; ", NLOW, NLOW, NLOW);
-									fprintf(out, "MI=%i; ", (InsertionStarted) ? NLOW : 2); 
+									fprintf(out, "MI=%i; ", (InsertionStarted) ? NLOW : 2);
 									fprintf(out, "II=%i; ", (InsertionStarted) ? 2 : NLOW);
 									fprintf(out, "ID=%i; ", (AcceptEnd) ? 0 : NLOW);
 									fprintf(out, "DI=%i; ", (DeletionStarted) ? 0 : NLOW);
@@ -752,18 +763,18 @@
 										fprintf(out, "DM=%i; DD=0; ", NLOW);
 									}
 									else {
-										if (!InsertionStarted) 
+										if (!InsertionStarted)
 											fputs("MD=2; ", out);
-										else 
+										else
 											fputs("DD=0; ", out);
 									}
 									if (InsertionStarted) fprintf(out, "DE=%i; ", NLOW);
-									
+
 									fprintf(out, "I=%i,%i,%i,%i,%i;\n", Bases[0], Bases[1], Bases[2], Bases[3], Bases[4]);
 
-									/*if (InsertionStarted || DeletionStarted) 
+									/*if (InsertionStarted || DeletionStarted)
 										fputs(" MD=0; DD=0;", out);
-									else 
+									else
 										fputs(" MD=1;", out);
 									if (AcceptEnd) fputs(" DM=0;", out);*/
 
@@ -789,7 +800,7 @@
 							perror("Profile closing");
 							exit(1);
 						}
-						
+
 						if (ReadProfile(ProfileName, &profile, true, false) <= 0) {
 							fprintf(stderr, "Error reading profile %s generated from interval %u--%u\n", ProfileName, task->GenomeStart, task->GenomeEnd);
 							assert(0);
@@ -807,7 +818,7 @@
 							while (l++ < task->GenomeEnd) fputc('=', stderr);
 							fputs("[\n", stderr);
 							fprintf(stderr, "               %.*s\n", (int) TotalLength, &GenomeBuffer[0]);
-							
+
 							fputs("               ", stderr);
 							for (l=0; l<WindowStart-1; l++) fputc(' ', stderr);
 							fputc(']', stderr);
@@ -816,7 +827,7 @@
 							fputs("[\n", stderr);
 						}
 #endif
-						
+
 						/* Reverse the profile */
 						struct Profile * restrict const revPrf = ReverseProfile(&profile);
 						if (PrepareExtraTable(revPrf) != 0) {
@@ -829,7 +840,9 @@
 						for (unsigned int iTag=0U; iTag<nTags; iTag++) {
 							const size_t SequenceLength = (size_t) ND[iTag]->TagLength;
 							assert(SequenceLength < kMaxReadLen);
-	//						fprintf(stderr, "Tag %u ", iTag);
+#ifdef DEBUG_INFO
+							fprintf(stderr, "Tag %u ", iTag);
+#endif
 							/* Transform Tag into the score indices */
 							{
 								int counter = 0;
@@ -845,7 +858,7 @@
 							ExtendedProfile_sse41.BuildMatrix(&profile, Indices, matrix, WORK, NULL, 0, SequenceLength);
 
 							/* Get Best Alignment */
-							const int nCol = 1 + TotalLength; 
+							const int nCol = 1 + TotalLength;
 							int HasFork = -1;
 							int revHasFork = -1;
 							int iprf = -1;
@@ -865,7 +878,9 @@
 									}
 								}
 								score[iTag] = BestScore;
-// 								printf("Best alignement ends at %i with score %i\n", iprf, BestScore); fflush(stdout);
+#ifdef DEBUG_INFO
+ 								printf("Best alignement ends at %i with score %i\n", iprf, BestScore); fflush(stdout);
+#endif
 							}
 
 							if (iprf == -1) {
@@ -890,7 +905,9 @@
 							/* Build the alignment sequence */
 							{
 								if (iprf < 1) {
-	//								fprintf(stderr, " iprf=%i found\n", iprf);
+#ifdef DEBUG_INFO
+									fprintf(stderr, " iprf=%i found\n", iprf);
+#endif
 									goto SKIP_THAT_ONE; // could be much more filtered
 								}
 								const char * restrict CharPtr = (char *) &(ND[iTag]->Tag[SequenceLength - 1]);
@@ -898,7 +915,7 @@
 								const char MinQuality = (char) options.filterQualValue;
 								assert(nKeptTags < nTags);
 								assert((nKeptTags*PFResults_ld+iprf-1) < PFResults_size);
-								char * restrict Sequence = &PFResults[nKeptTags*PFResults_ld+iprf-1]; // INVESTIGATE MINUS ONE  
+								char * restrict Sequence = &PFResults[nKeptTags*PFResults_ld+iprf-1]; // INVESTIGATE MINUS ONE
 								size_t State = EXTRA;
 								int index = SequenceLength;
 #ifndef NDEBUG
@@ -1000,7 +1017,7 @@
 #endif
 								goto SKIP_THAT_ONE;
 							DONE: ;
-								
+
 								/*
 								* Attempt to find connection between the different possible alignments
 								*/
@@ -1089,7 +1106,7 @@
 										}
 									}
 								}
-								
+
 								/*
 								* Attempt to find connection between the different possible alignments
 								*/
@@ -1128,8 +1145,8 @@
 									}
 									fputs("Potential issue as alignment does not start with an ENTRY point in std!\n", stderr);
 									goto SKIP_THAT_ONE;
-									DONE3:;	
-									
+									DONE3:;
+
 									CellListPtr[0][0] = (short int) -1;
 									CellListPtr = CellList;
 									iprf = revHasFork;
@@ -1171,7 +1188,7 @@
 												break;
 										}
 									}
-									DONE4:;	
+									DONE4:;
 								}
 							}
 
@@ -1216,7 +1233,7 @@
 							if (revHasFork >= 0) {
 								memset(&PFResults[(nKeptTags)*PFResults_ld],' ', TotalLength - revHasFork);
 							}
-							
+
 							/* Remove the fork at the end */
 							if (HasFork >= 0) {
 								memset(&PFResults[(nKeptTags)*PFResults_ld+HasFork],' ', TotalLength - HasFork);
@@ -1225,14 +1242,16 @@
 #ifdef ANALYZE_FULL_OUTPUT
 							PFResults[nKeptTags*PFResults_ld+(PFResults_ld-1UL)] = (ND[iTag]->revNmer) ? '<' : '>';
 #endif
-							
+
 							nKeptTags++;
 							continue;
-							
+
 							SKIP_THAT_ONE: ;
 
-	// 						printf("ANA: %u-%u Removing tag %3u %s HasFork=%i revHasFork=%i\n", task->GenomeStart,
-	// 						       task->GenomeEnd, iTag, ND[iTag]->Tag, HasFork, revHasFork);
+#ifdef DEBUG_INFO
+							printf("ANA: %u-%u Removing tag %3u %s HasFork=%i revHasFork=%i\n", task->GenomeStart,
+										 task->GenomeEnd, iTag, ND[iTag]->Tag, HasFork, revHasFork);
+#endif
 
 							/* Clean before reusing, you idiot !!! */
 							memset(&PFResults[nKeptTags*PFResults_ld], ' ', PFResults_ld);
@@ -1246,7 +1265,7 @@
 #ifndef DEBUG_INFO
 						remove(ProfileName);
 #endif
-					}			
+					}
 					else {
 						nKeptTags = nTags;
 						const char MinQuality = (char) options.filterQualValue;
@@ -1275,24 +1294,26 @@
 													(int) TotalLength,  &PFResults[iTag*PFResults_ld]);
 #endif
 						}
-					}				
+					}
 					///////////////////////////////////////////////////////////////////////////////////////////////////
 					// Analysis
 					///////////////////////////////////////////////////////////////////////////////////////////////////
 					/* Do what you have to do .... */
-// 					printf("ANA: Kept %u on %u-%u\n", nKeptTags, task->GenomeStart, task->GenomeEnd);
+#ifdef DEBUG_INFO
+ 					printf("ANA: Kept %u on %u-%u\n", nKeptTags, task->GenomeStart, task->GenomeEnd);
+#endif
 					if (nKeptTags > 0U) {
 						unsigned int WindowStartGenomeAddress;
 						const unsigned int InitialWindowStart = WindowStart;
 						const unsigned int InitialWindowLength = WindowLength;
 						struct ExtraData *nValuableBasesPerTag = malloc(nKeptTags * sizeof(struct ExtraData));
-						
+
 						/* Check Window borders, we cannot have neither insertions nor deletions cut in half */
 						{
-							/* Keeping genome extension ( insertion) */ 
+							/* Keeping genome extension ( insertion) */
 							unsigned char * WindowToKeep = (unsigned char *) Buffer;
 							for (unsigned int k=0; k<TotalLength; k++) WindowToKeep[k] = (GenomeBuffer[k] == ' ') ? 1 : 0;
-							
+
 							/* Keeping Genome Deletions */
 							const char * restrict ptr = PFResults;
 							for (unsigned int k=0; k<nKeptTags; k++) {
@@ -1313,7 +1334,7 @@
 								ssize_t dummy = WindowStart-1;
 								while (dummy >= 0L && WindowToKeep[dummy] == 1) { --dummy;}
 								dummy++;
-// 								const int diff = WindowStart - (int) dummy; 
+// 								const int diff = WindowStart - (int) dummy;
 // 								WindowStartGenomeAddress = task->GenomeStart - diff;
 								WindowStartGenomeAddress = task->GenomeStart;
 								for (int k=WindowStart-1; k>=(int) dummy; k--) {
@@ -1323,6 +1344,9 @@
 							}
 							assert(WindowEnd >= WindowStart);
 							WindowLength = WindowEnd - WindowStart + 1;
+#ifdef DEBUG_INFO
+							printf("WindowStart %u WindowEnd %u WindowLength %u\n", WindowStart, WindowEnd, WindowLength);
+#endif
 						}
 
 						/* Make a transpose copy of the results */
@@ -1353,12 +1377,15 @@
 							}
 						}
 
-// 							for (unsigned int k=0; k<nKeptTags; k++) {
-// 								for (unsigned int l=0; l<WindowStart; l++) fputc(' ', stdout);
-// 								for (unsigned int l=0; l<WindowLength; l++) 
-// 									fputc((int) TransposePFResults[l*TransposePFResults_ld+k], stdout);
-// 								fputc('\n', stdout);
-// 							}
+#ifdef DEBUG_INFO
+						printf("Transposed results kept %u WindowStart %u WindowLength %u\n", nKeptTags, WindowStart, WindowLength);
+						for (unsigned int k=0; k<nKeptTags; k++) {
+							for (unsigned int l=0; l<WindowStart; l++) fputc(' ', stdout);
+							for (unsigned int l=0; l<WindowLength; l++)
+								fputc((int) TransposePFResults[l*TransposePFResults_ld+k], stdout);
+							fputc('\n', stdout);
+						}
+#endif
 
 						/* Cleaning the data according to a minimum of occurence : MINIMUM_APPEARANCE */
 						unsigned char HasData[WindowLength];
@@ -1370,7 +1397,7 @@
 							unsigned int Useless = 0U;
 							for (size_t k=0; k<nKeptTags; k++) {
 								register unsigned char value = col[k];
-								if (value == '-') 
+								if (value == '-')
 									Counters[4]++;
 								else if (value == ' ' || value == 'N')
 									++Useless;
@@ -1382,40 +1409,49 @@
 
 							/* Adding a dynamic threshold based upon total number */
 							const unsigned int total = Counters[0] + Counters[1] + Counters[2] + Counters[3] + Counters[4];
-							const unsigned int MinDyn = (20*total)/100;
+							const unsigned int MinDyn = (options.minorAllelePct*total)/100;
+#ifdef DEBUG_INFO
+							fprintf(stderr,"total = %u MinDyn = %u\n", total, MinDyn);
+#endif
 							for (int k=0;k<5;k++) if (Counters[k] < MinDyn) {
 								Useless += Counters[k];
 								Counters[k] = 0U;
 							}
 
-							for (int k=0;k<5;k++) if (Counters[k] < MINIMUM_APPEARANCE) { 
-								Useless += Counters[k]; 
+							for (int k=0;k<5;k++) if (Counters[k] < MINIMUM_APPEARANCE) {
+								Useless += Counters[k];
 								Counters[k] = 0U;
 							}
 
 							if ((GenomeBase == ' ') && ((Counters[4] + MINIMUM_APPEARANCE) >= (nKeptTags - Useless))) Counters[4] = 0U;
 
+#if 0
+// FIXME - ? I do not understand why the content is modified here
 							for (size_t k=0; k<nKeptTags; k++) {
 								register unsigned char value = col[k];
 								if (value == '-' && GenomeBase != ' ' && Counters[4] == 0U) col[k] = 'x';
 								else if (value == GenomeBase && value != ' ') col[k] = '.';
 								else if ( value >= 'A' && Counters[(value>>1) & 0b11] == 0U) col[k] = '?';
 							}
+#endif
 
 							/* Is it valuable or not as a whole ? */
 							if (GenomeBase != ' ') {
 								HasData[l] = '0';
 								if (GenomeBase != 'N') {
 									const unsigned char GenomeBaseIndex = (GenomeBase>>1) & 0b11;
+									//fprintf(stderr,"l %u %c idx %u Counters %u %u %u %u %u\n", l, GenomeBase, GenomeBaseIndex, Counters[0], Counters[1], Counters[2], Counters[3], Counters[4]);
 									for (unsigned char k=0; k<5; k++) {
-										if ( k != GenomeBaseIndex && Counters[k]) HasData[l] = '1'; 
+										if ( k != GenomeBaseIndex && Counters[k]) HasData[l] = '1';
 									}
+									//fprintf(stderr,"l %u %c idx %u Counters %u %u %u %u %u HasData %c\n",
+									//				l, GenomeBase, GenomeBaseIndex, Counters[0], Counters[1], Counters[2], Counters[3], Counters[4], HasData[l]);
 								}
 							}
 							else {
 								HasData[l] = (Counters[0] || Counters[1] || Counters[2] || Counters[3] || Counters[4]) ? '1' : '0';
 							}
-							if (HasData[l] == '1') nValuableBases++; 
+							if (HasData[l] == '1') nValuableBases++;
 						}
 
 #ifdef DEBUG_INFO
@@ -1427,7 +1463,7 @@
 							l = 0U;
 							while (l++ < InitialWindowLength) fputc('=', stderr);
 							fputs("[\n", stderr);
-							
+
 							fputs("               ", stderr);
 							for (l=0; l<WindowStart-1; l++) fputc(' ', stderr);
 							fputc(']', stderr);
@@ -1437,9 +1473,9 @@
 							fputs("               ", stderr);
 							for(unsigned int k=0; k<WindowStart; k++) fputc(' ', stderr);
 							fprintf(stderr, "%.*s\n", (int) WindowLength, HasData);
-// 							for(unsigned int k=0; k<WindowStart; k++) fputc(' ', stdout);
-// 							printf("%.*s\n", (int) WindowLength, &GenomeBuffer[WindowStart]);
-// 							printf("Found %i valuable changes on %u regions\n", nValuableBases, nRegions);
+ 							for(unsigned int k=0; k<WindowStart; k++) fputc(' ', stdout);
+ 							printf("%.*s\n", (int) WindowLength, &GenomeBuffer[WindowStart]);
+ 							printf("Found %i valuable changes\n", nValuableBases);
 						}
 #endif
 						/* Avoiding regions not starting in mandated genome range */
@@ -1452,12 +1488,12 @@
 								--offset;
 							}
 							while (offset >= 0 ) HasData[offset--] = '0';
-							
+
 							offset = (InitialWindowStart + InitialWindowLength) - WindowStart;
 							while (offset < WindowLength && HasData[offset] == '1') ++offset;
 							while (offset < WindowLength) HasData[offset++] = '0';
 						}
-						
+
 						nValuableBases = 0U;
 						for (size_t l=0; l<WindowLength; l++) if (HasData[l] == '1') ++nValuableBases;
 
@@ -1474,7 +1510,7 @@
 									/*int l = (int) k - 1;
 									while (l >= 0 && LocalGenomeWindow[l] == ' ' && HasData[l] == '0') l--;
 									if (HasData[l] == '1') {
-										while(++l < k) { HasData[l] = '1'; nValuableBases++; } 
+										while(++l < k) { HasData[l] = '1'; nValuableBases++; }
 									}
 									else*/
 										nRegions++;
@@ -1489,8 +1525,11 @@
 						bcf1_t * const restrict rec = task->VCFRecord;
 						assert(rec);
 						ngt = bcf_get_format_int32(hdr, rec, "GT", &gt, &ngt_arr);
-						assert(ngt == 2);
-						
+#ifdef DEBUG_INFO
+						printf("ngt = %u, expected 2\n", ngt);
+						//assert(ngt == 2);
+#endif
+
 						unsigned int CurrentTypeID = 0U;
 						if (!bcf_is_snp(rec)) {
 							CurrentTypeID = (rec->d.var[bcf_gt_allele(gt[0])].n < 0 || rec->d.var[bcf_gt_allele(gt[1])].n < 0) ? 1 : 2;
@@ -1498,7 +1537,7 @@
 						unsigned int RealMemoryPosition = 1 + rec->pos;
 						if (CurrentTypeID != 0) RealMemoryPosition += 1; /* God knows why, this is necessary !!! */
 #endif
-						
+
 						if (nValuableBases == 0LU) {
 #if TAG_ANALYSIS_MODE == NIRVANA
 							fprintf(stdout,"\x1b[2K\x1b[GNo variant in interval %u-%u for %u\t%s\t%s\t%s/%s\t%u/%u\n", task->GenomeStart, task->GenomeEnd, RealMemoryPosition, types[CurrentTypeID], rec->d.allele[0], rec->d.allele[bcf_gt_allele(gt[0])], rec->d.allele[bcf_gt_allele(gt[1])], bcf_gt_allele(gt[0]), bcf_gt_allele(gt[1]));
@@ -1515,7 +1554,7 @@
 							l = 0U;
 							while (l++ < InitialWindowLength) fputc('=', stderr);
 							fputs("[\n", stderr);
-							
+
 							fputs("               ", stderr);
 							for (l=0; l<WindowStart-1; l++) fputc(' ', stderr);
 							fputc(']', stderr);
@@ -1525,12 +1564,12 @@
 							fputs("               ", stderr);
 							for(unsigned int k=0; k<WindowStart; k++) fputc(' ', stderr);
 							fprintf(stderr, "%.*s\n", (int) WindowLength, HasData);
-// 							for(unsigned int k=0; k<WindowStart; k++) fputc(' ', stdout);
-// 							printf("%.*s\n", (int) WindowLength, &GenomeBuffer[WindowStart]);
-// 							printf("Found %i valuable changes on %u regions\n", nValuableBases, nRegions);
+ 							for(unsigned int k=0; k<WindowStart; k++) fputc(' ', stdout);
+ 							printf("%.*s\n", (int) WindowLength, &GenomeBuffer[WindowStart]);
+ 							printf("Found %i valuable changes on %u regions\n", nValuableBases, nRegions);
 						}
+ 						printf("Before reg : %.*s\n", (int) WindowLength, HasData);
 #endif
-// 						printf("Before reg : %.*s\n", (int) WindowLength, HasData);
 						struct RegionsData {
 							unsigned int genomepos;
 							unsigned int uncovered;
@@ -1539,7 +1578,9 @@
 						} RegData[/*nRegions*/kMaxReadLen/3];
 						assert(nRegions < kMaxReadLen/3);
 						char GenomeWindow[WindowLength];
-// 						printf("After reg : %.*s\n", (int) WindowLength, HasData);
+#ifdef DEBUG_INFO
+ 						printf("After reg : %.*s\n", (int) WindowLength, HasData);
+#endif
 						{
 							unsigned char previous = '0';
 							struct RegionsData * restrict ptr = RegData;
@@ -1569,7 +1610,7 @@
 							if (previous == '1') ptr[-1].length = len;
 							// We will get back to that !!! assert(HasData[WindowLength] == '0');
 						}
-						
+
 #ifdef DEBUG_INFO
 						{
 							for (unsigned int k=0; k<nRegions; k++) {
@@ -1585,9 +1626,9 @@
 								fputc('\n', stderr);
 							}
 						}
-#endif
 
-// 						printf("Before concat : %.*s\n", (int) WindowLength, HasData);
+ 						printf("Before concat : %.*s\n", (int) WindowLength, HasData);
+#endif
 
 						/* Concatenating tags */
 						const size_t Informations_ld = (nValuableBases + 15UL) & ~(15UL);
@@ -1595,7 +1636,7 @@
 						char * const restrict Informations = Buffer;
 						char * restrict InformationsPtr = Informations;
 						unsigned int nValuableTags = 0U;
-						
+
 #ifdef ANALYZE_FULL_OUTPUT
 						const size_t nRegions4 = (nRegions + 3UL) >> 2;
 						const size_t nValuableBases2 = (1+nValuableBases)/2;
@@ -1614,7 +1655,7 @@
 						}
 						unsigned short int * restrict PHredStatPtr = &RegionsStat[8UL*nRegions4*nKeptTags];
 #endif
-						
+
 						for (size_t k=0; k<nKeptTags; k++) {
 							unsigned int pos = 0U;
 							unsigned int valuable = 0U;
@@ -1625,11 +1666,11 @@
 							for (size_t l=0; l<WindowLength; l++) {
 								if (HasData[l] == '1') {
 									const char currentBase = TransposePFResults[l*TransposePFResults_ld+k];
-									
+
 #ifdef ANALYZE_FULL_OUTPUT
 									size_t StatIndex = 0UL;
 									static const unsigned char PHredLimits[3] = { 6, 10, 20 };
-									
+
 									char lcurrentBase;
 									unsigned char currentQuality;
 									if (currentBase != '-') {
@@ -1640,12 +1681,12 @@
 										currentQuality = TransposePFResults[(l-1)*TransposePFResults_ld+k+TransposePFResults_size];
 										lcurrentBase = TransposePFResults[(l-1)*TransposePFResults_ld+k];;
 									}
-									
+
 									if (lcurrentBase != '-' && lcurrentBase != ' ' && currentQuality >= '\0') {
 										while (StatIndex < 3UL) {
-											if (currentQuality > PHredLimits[StatIndex]) 
+											if (currentQuality > PHredLimits[StatIndex])
 												StatIndex++;
-											else 
+											else
 												break;
 										}
 										PHredStatPtr[4UL*pos+StatIndex] = 1;
@@ -1655,7 +1696,9 @@
 									if ( currentBase != ' ' && currentBase != 'x' && currentBase != '?') valuable++;
 								}
 							}
-// 							printf("'%.3s'\t%.*s\n", InformationsPtr, (int) WindowLength, HasData);
+#ifdef DEBUG_INFO
+ 							printf("'%.3s'\t%.*s\n", InformationsPtr, (int) WindowLength, HasData);
+#endif
 							if (valuable) {
 								nValuableBasesPerTag[nValuableTags].ptr = InformationsPtr;
 #ifdef ANALYZE_FULL_OUTPUT
@@ -1690,10 +1733,10 @@
 							goto TaskDone;
 						}
 						qsort(nValuableBasesPerTag, nValuableTags, sizeof(struct ExtraData), MyCompare);
-						
+
 #ifdef DEBUG_INFO
 						fputs("Initial:\n", stderr);
-#ifndef ANALYZE_FULL_OUTPUT						
+#ifndef ANALYZE_FULL_OUTPUT
 						for (int k=0; k<nValuableTags; k++) {
 							fprintf(stderr, "%.*s\t%u/%zu\n", (int) nValuableBases, nValuableBasesPerTag[k].ptr, nValuableBasesPerTag[k].n,nValuableBases);
 						}
@@ -1709,7 +1752,7 @@
 								fputs(" | ", stderr);
 								fprintf(stderr, "%4hu %4hu %4hu %4hu", Counters[4*iBase], Counters[4*iBase+1],Counters[4*iBase+2],Counters[4*iBase+3]);
 							}
-							fputc('\n', stderr); 
+							fputc('\n', stderr);
 						}
 #endif
 #endif
@@ -1721,9 +1764,9 @@
 							Significatives[0].count = 1U;
 							for (size_t k=1; k<nValuableTags; k++) {
 								int found = 0;
-								for (size_t l=0; l<nSignificative; l++) { 
+								for (size_t l=0; l<nSignificative; l++) {
 									if (strncmp(nValuableBasesPerTag[k].ptr, Significatives[l].data.ptr, (size_t) nValuableBases) == 0) {
-										Significatives[l].count++;								
+										Significatives[l].count++;
 										SUM_UP(Significatives[l].data, nValuableBasesPerTag[k]);
 										found = 1;
 										break;
@@ -1738,7 +1781,7 @@
 						}
 #ifdef DEBUG_INFO
 						fputs("\nGrouping identical\n", stderr);
-#ifndef ANALYZE_FULL_OUTPUT	
+#ifndef ANALYZE_FULL_OUTPUT
 						for (int k=0; k<nSignificative; k++) {
 							fprintf(stderr, "%.*s\t%u/%zu\t%u\n",(int) nValuableBases, Significatives[k].data.ptr, Significatives[k].data.n, nValuableBases, Significatives[k].count);
 						}
@@ -1764,7 +1807,7 @@
 									const char * const restrict Src = Significatives[l].data.ptr;
 									if (Src) {
 										unsigned int count = 0U;
-										
+
 										for (size_t m=0; m<nValuableBases; m++) {
 											unsigned int keepIf;
 											keepIf  = (Test[m] == '?' && Src[m] != '-');
@@ -1784,10 +1827,10 @@
 									Significatives[k].count = 0U;
 								}
 							}
-							
+
 							qsort(Significatives, nSignificative, sizeof(struct Ordering), MyOrdering);
 						}
-						
+
 #ifdef DEBUG_INFO
 						{
 							fputs("\nPlace partial that uniquely match a category with no error\n", stderr);
@@ -1802,10 +1845,10 @@
 							fprintf(stderr, "Total tags %u/%u\n", count, nValuableTags);
 						}
 #endif
-						
+
 						/* Assign those below MAF (%u) to groups with up to 1 error if sufficient valuable bases */
 						if (nValuableBases > 5) {
-							const unsigned int uiMAF = (unsigned int) (MAF*(float) nValuableTags); 
+							const unsigned int uiMAF = (unsigned int) (MAF*(float) nValuableTags);
 							for (unsigned int k=1; k<nSignificative; k++) {
 								const char * const Test = Significatives[k].data.ptr;
 								if (Test == NULL || Significatives[k].count >= uiMAF) continue;
@@ -1815,7 +1858,7 @@
 									const char * const Src = Significatives[l].data.ptr;
 									if (Src) {
 										unsigned int count = 0U;
-										
+
 										for (size_t m=0; m<nValuableBases; m++) {
 											unsigned int keepIf;
 											keepIf  = (Test[m] == '?' && Src[m] != '-');
@@ -1835,7 +1878,7 @@
 									Significatives[k].count = 0U;
 								}
 							}
-							
+
 							qsort(Significatives, nSignificative, sizeof(struct Ordering), MyOrdering);
 #ifdef DEBUG_INFO
 							{
@@ -1864,7 +1907,7 @@
 									const char * const restrict Src = Significatives[l].data.ptr;
 									if (Src) {
 										unsigned int count = 0U;
-										
+
 										for (size_t m=0; m<nValuableBases; m++) {
 											unsigned int keepIf;
 											keepIf  = (Test[m] == '?' && Src[m] != '-');
@@ -1883,10 +1926,10 @@
 									Significatives[k].count = 0U;
 								}
 							}
-							
+
 							qsort(Significatives, nSignificative, sizeof(struct Ordering), MAFOrdering);
 						}
-						
+
 #ifdef DEBUG_INFO
 						{
 							fputs("\nPlace partial that uniquely match a category with no error\n", stderr);
@@ -1901,7 +1944,7 @@
 							fprintf(stderr, "Total tags %u/%u\n", count, nValuableTags);
 						}
 #endif
-						
+
 						/* Keeping... */
 						int AllOK = 1;
 						int AvailableAlleles = 0;
@@ -1914,7 +1957,7 @@
 							assert(nValuableTags > 0);
 							const float invnTags = 1.0f/(float) nValuableTags;
 							int count = 0;
-							
+
 							float TrashPart = 0.0f;
 							for (int k=0; k<nSignificative; k++) {
 								if (Significatives[k].data.ptr ) {
@@ -1959,7 +2002,7 @@
 												IF_DEBUG_INFO(fputs(" All fine :)\n", stderr));
 											}
 										}
-										else { 
+										else {
 											IF_DEBUG_INFO(fputc('\n', stderr));
 										}
 									}
@@ -1969,14 +2012,14 @@
 								}
 							}
 							AvailableAlleles = count;
-							
+
 							assert(InfoPtr < &Info[INFO_SIZE]);
 							if (InfoPtr[-1] == ',') InfoPtr--;
 							InfoPtr += sprintf(InfoPtr, ";WTRASH=%4.2f;WA=%u;WREG=%u", TrashPart ,AvailableAlleles, nRegions);
 						}
-						
+
 #if TAG_ANALYSIS_MODE == NIRVANA
-						const int VCFIsHeterozygote = (bcf_gt_allele(gt[0]) != bcf_gt_allele(gt[1])); 
+						const int VCFIsHeterozygote = (bcf_gt_allele(gt[0]) != bcf_gt_allele(gt[1]));
 						int FoundVCFLocation = 0;
 #else
 						int FoundVCFLocation = 1;
@@ -2007,9 +2050,9 @@
 									}
 									IF_DEBUG_INFO(fprintf(stdout, "Region %i, border correction: pos=%u, length=%u\n", iRegion, RegData[iRegion].genomepos + k, len));
 								}
-								char * restrict RegInfoPtr = InfoPtr; 
-								if (RegData[iRegion].uncovered == 1) RegInfoPtr += sprintf(RegInfoPtr,";REGWRN"); 
-								
+								char * restrict RegInfoPtr = InfoPtr;
+								if (RegData[iRegion].uncovered == 1) RegInfoPtr += sprintf(RegInfoPtr,";REGWRN");
+
 								assert( (k+len) <= nValuableBases);
 								unsigned char DoTest = 0;
 #if TAG_ANALYSIS_MODE == NIRVANA
@@ -2030,7 +2073,7 @@
 											assert((k+l) < nValuableBases);
 											if (Significatives[0].data.ptr[k+l] != ' ') break; else  ++l;
 										}
-										const int removeFirst = (l>=len); 
+										const int removeFirst = (l>=len);
 										if (AvailableAlleles > 1) {
 											l=0;
 											while(l<len) {
@@ -2050,10 +2093,10 @@
 												goto NextRegion;
 											}
 										}
-										
+
 										if (removeFirst) {
 											l=0;
-											while(l<len) { 
+											while(l<len) {
 												assert((k+l) < nValuableBases);
 												Significatives[0].data.ptr[k+l] = Significatives[1].data.ptr[k+l];
 												l++;
@@ -2064,12 +2107,12 @@
 													Heterozygote = 1;
 										}
 									}
-									
+
 									IF_DEBUG_INFO(printf("Region %i AL 0 : \'%.*s\'\t", iRegion, len, &(Significatives[0].data.ptr[k])));
 									IF_DEBUG_INFO(if (AvailableAlleles > 1) printf("AL 1 : \'%.*s\'\t", len, &(Significatives[1].data.ptr[k])));
 									IF_DEBUG_INFO(printf("Ext. genome : \'%.*s\'\n", len, &GenomeWindow[k]));
 									IF_DEBUG_INFO(printf("Region %i heterozygote = %u\n", iRegion, (unsigned int) Heterozygote));
-									
+
 									const char * const restrict Gen = &GenomeWindow[k];
 									char GT[4] = { '0', '/', '!', '\0' };
 									assert(len < MAX_ALLELE_SIZE);
@@ -2109,10 +2152,10 @@
 									}
 									else
 										GT[2*Second] = GT[0] + 1;
-									
+
 									assert (ptrAllele < (PosBackup+MAX_ALLELE_SIZE));
 									*ptrAllele = '\0';
-									
+
 									IF_DEBUG_INFO(printf("ALLELE %i \'%s\', %u (.), %u (-/x/space), GT %c\n", Second, toPrint, nPoints, nDashesOrX, (int) GT[2*Second]));
 
 									if (Heterozygote && !Second) {
@@ -2140,7 +2183,7 @@
 										while (l<len) if (ptr[l++] != ' ') Previously[m++] = ptr[l-1];
 										Previously[m] = '\0';
 									}
-									
+
 									Heterozygote = (GT[0] != GT[2]);
 // 									if (Heterozygote && (GT[0] != '0' && GT[2] != '0') && *Allele0 == *Allele1) fprintf(stdout, "\x1b[2K\x1b[GOOPS !!!!! \'%s\' and \'%s\'\n", Allele0, Allele1);
 
@@ -2162,7 +2205,7 @@
 												do {
 													assert(((VCFPosition - Position) + l) < MAX_ALLELE_SIZE); // len does not have the previous character accounted
 													if (Allele0[(VCFPosition - Position) + l] != Allele1[(VCFPosition - Position) + l]) check = 0;
-												} while (++l<vcfLen); 
+												} while (++l<vcfLen);
 											}
 										}
 										if (check == 0 || VCFIsHeterozygote) {
@@ -2171,7 +2214,7 @@
 											ok = 0;
 										}
 									}
-									
+
 									if (ok) {
 										int found = 0;
 										if (Position <= VCFPosition) {
@@ -2184,32 +2227,32 @@
 												assert(((VCFPosition - Position) + l) < MAX_ALLELE_SIZE); // len does not have the previous character accounted
 												if (Allele0[(VCFPosition - Position) + l] != SrcPtr[l]) check0 = 0;
 												if (Allele1[(VCFPosition - Position) + l] != SrcPtr[l]) check1 = 0;
-											} while (++l<vcfLen); 
+											} while (++l<vcfLen);
 											found += check0;
 											found += check1;
-											
+
 											if (found == 0) {
 												ok = 0;
 												ErrorId = 2;
 												atomic_fetch_add(&nAllele0NotFound, 1);
 											}
-											
+
 											/* Seeking Allele 1 */
 											if (Heterozygote) {
 												found = 0;
 												SrcPtr = rec->d.allele[bcf_gt_allele(gt[1])];
 												vcfLen = strlen(SrcPtr);
-												
+
 												check0 = 1, check1 = 1;
 												l = 0UL;
 												do {
 													assert(((VCFPosition - Position) + l) < MAX_ALLELE_SIZE); // len does not have the previous character accounted
 													if (Allele0[(VCFPosition - Position) + l] != SrcPtr[l]) check0 = 0;
 													if (Allele1[(VCFPosition - Position) + l] != SrcPtr[l]) check1 = 0;
-												} while (++l<vcfLen); 
+												} while (++l<vcfLen);
 												found += check0;
 												found += check1;
-												
+
 												if (found == 0) {
 													ok = 0;
 													ErrorId = 3;
@@ -2226,7 +2269,7 @@
 // 												exit(1);
 										}
 									}
-									
+
 									if (ok) {
 										atomic_fetch_add(&nRecordsFound, 1);
 										if (outfile) {
@@ -2247,11 +2290,11 @@
 									break;
 #else
 									/* VCF printf("%s\t%u\t.\t%.*s\t%c\t255\tPASS\t.\tGT:DP:AD\t%s:%u:%u,%u\n", */
-									IF_DEBUG_INFO(printf("Region start=%u, k=%u, nPos=%u, Indel=%u\n", 
+									IF_DEBUG_INFO(printf("Region start=%u, k=%u, nPos=%u, Indel=%u\n",
 									                     RegData[iRegion].genomepos, k, nPos, InDel));
-									
+
 									if ( Position <= task->GenomeEnd && Position >= task->GenomeStart) {
-#ifdef ANALYZE_FULL_OUTPUT			
+#ifdef ANALYZE_FULL_OUTPUT
 										const size_t index = (Genome.virtchr[options.chr].chr << 28) + Genome.virtchr[options.chr].offset;
 										const char * restrict GenomePtr = (char *) Genome.table + index + Position;
 #endif
@@ -2260,7 +2303,7 @@
 										/* ----------------------------- HETEROZYGOTE ----------------------------------------- */
 										if (Heterozygote) {
 											const size_t len1 = strlen(Allele1);
-											
+
 											/* Verify not being the reference */
 											if (len0 == lenOrig && strncmp(Previously, Allele0, len0) == 0) {
 												GT[0] = '0';
@@ -2270,7 +2313,7 @@
 												GT[2] = '0';
 												if (GT[0] == '2') GT[0] = '1';
 											}
-											
+
 #ifdef ANALYZE_FULL_OUTPUT
 											const unsigned short int * const restrict PHredStat0 = Significatives[0].data.PHred + nPos*4UL;
 											const unsigned short int * const restrict PHredStat1 = Significatives[1].data.PHred + nPos*4UL;
@@ -2303,11 +2346,11 @@
 											_mm_store_ps( &sumF0[0], __sumF0);
 											_mm_store_ps( &sumF1[0], __sumF1);
 #endif
-											
+
 											if (GT[0] != '0' && GT[2] != '0') {
 												IF_DEBUG_INFO(fprintf(stdout, "0: \'%s\' (%lu) 1:\'%s\' (%lu) G: \'%s\' (%lu)\n",
 																							Allele0, len0, Allele1, len1, Previously, lenOrig));
-																						
+
 												/* Based on length analysis */
 												if (len0 == len1) {
 													if (len0 == lenOrig) {
@@ -2323,7 +2366,7 @@
 																	if (Allele0[l] != Allele1[l]) {
 																		if (Allele0[l] != ' ' && Allele1[l] != ' ') {
 #ifdef ANALYZE_FULL_OUTPUT
-																			TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=0,0,%hu,%hu,%hu,%hu", 
+																			TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=0,0,%hu,%hu,%hu,%hu",
 																														Significatives[0].data.Accounting[2*iRegion], Significatives[0].data.Accounting[2*iRegion+1],
 																														Significatives[1].data.Accounting[2*iRegion], Significatives[1].data.Accounting[2*iRegion+1]);
 																			TmpInfoPtr += sprintf(TmpInfoPtr, ";PHRED=%hu.0,%hu.0,%hu.0,%hu.0,%hu.0,%hu.0,%hu.0,%hu.0", uiptr0[0], uiptr0[1], uiptr0[2], uiptr0[3], uiptr1[0], uiptr1[1], uiptr1[2], uiptr1[3]);
@@ -2338,7 +2381,7 @@
 																		}
 																		else if (Allele0[l] == ' ') {
 #ifdef ANALYZE_FULL_OUTPUT
-																			TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=0,0,%hu,%hu", 
+																			TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=0,0,%hu,%hu",
 																														Significatives[1].data.Accounting[2*iRegion], Significatives[1].data.Accounting[2*iRegion+1]);
 																			const unsigned short int * const restrict uiptr1 = Significatives[1].data.PHred +((l-1UL)+nPos)*4UL;
 																			TmpInfoPtr += sprintf(TmpInfoPtr, ";PHRED=%hu.0,%hu.0,%hu.0,%hu.0", uiptr1[0], uiptr1[1], uiptr1[2], uiptr1[3]);
@@ -2351,7 +2394,7 @@
 																		}
 																		else {
 #ifdef ANALYZE_FULL_OUTPUT
-																			TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=0,0,%hu,%hu", 
+																			TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=0,0,%hu,%hu",
 																														Significatives[0].data.Accounting[2*iRegion], Significatives[0].data.Accounting[2*iRegion+1]);
 																			const unsigned short int * const restrict uiptr0 = Significatives[1].data.PHred +((l-1UL)+nPos)*4UL;
 																			TmpInfoPtr += sprintf(TmpInfoPtr, ";PHRED=%hu.0,%hu.0,%hu.0,%hu.0", uiptr0[0], uiptr0[1], uiptr0[2], uiptr0[3]);
@@ -2361,15 +2404,15 @@
 																			fprintf(stdout, "%s\t%lu\t.\t%1.1s\t%1.1s\t50\tPASS\t%s;WND=%u-%u\tGT:DP:AD\t1/1:%u:0,%u\n",
 																							Genome.virtchr[options.chr].AC, Position+l, &Previously[l], &Allele0[l], Info,
 																							task->GenomeStart, task->GenomeEnd, nValuableTags, Significatives[0].count);
-																			
+
 																		}
 																	}
 																	else {
 #ifdef ANALYZE_FULL_OUTPUT
-																		TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=0,0,%hu,%hu", 
+																		TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=0,0,%hu,%hu",
 																		                     Significatives[0].data.Accounting[2*iRegion] + Significatives[1].data.Accounting[2*iRegion],
 																		                     Significatives[0].data.Accounting[2*iRegion+1] + Significatives[1].data.Accounting[2*iRegion+1]);
-																		TmpInfoPtr += sprintf(TmpInfoPtr, ";PHRED=0.0,0.0,0.0,0.0,%hu.0,%hu.0,%hu.0,%hu.0", 
+																		TmpInfoPtr += sprintf(TmpInfoPtr, ";PHRED=0.0,0.0,0.0,0.0,%hu.0,%hu.0,%hu.0,%hu.0",
 																		                      uiptr0[0]+uiptr1[0], uiptr0[1]+ uiptr1[1], uiptr0[2]+uiptr1[2], uiptr0[3]+uiptr1[3]);
 																		TmpInfoPtr += sprintf(TmpInfoPtr,";GT=1/1;DP=%u;AD=0,%u", nValuableTags,  Significatives[0].count + Significatives[1].count);
 																		assert(TmpInfoPtr < &Info[INFO_SIZE]);
@@ -2382,7 +2425,7 @@
 															}
 															else if ( (Allele0[l] != Previously[l]) && (Allele1[l] == Previously[l]) ) {
 #ifdef ANALYZE_FULL_OUTPUT
-																TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=%hu,%hu,%hu,%hu", 
+																TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=%hu,%hu,%hu,%hu",
 																											Significatives[1].data.Accounting[2*iRegion], Significatives[1].data.Accounting[2*iRegion+1],
 																											Significatives[0].data.Accounting[2*iRegion], Significatives[0].data.Accounting[2*iRegion+1]);
 																TmpInfoPtr += sprintf(TmpInfoPtr, ";PHRED=%hu.0,%hu.0,%hu.0,%hu.0,%hu.0,%hu.0,%hu.0,%hu.0",
@@ -2397,7 +2440,7 @@
 															}
 															else if ( (Allele0[l] == Previously[l]) && (Allele1[l] != Previously[l]) ) {
 #ifdef ANALYZE_FULL_OUTPUT
-																TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=%hu,%hu,%hu,%hu", 
+																TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=%hu,%hu,%hu,%hu",
 																											Significatives[0].data.Accounting[2*iRegion], Significatives[0].data.Accounting[2*iRegion+1],
 																											Significatives[1].data.Accounting[2*iRegion], Significatives[1].data.Accounting[2*iRegion+1]);
 																TmpInfoPtr += sprintf(TmpInfoPtr, ";PHRED=%hu.0,%hu.0,%hu.0,%hu.0,%hu.0,%hu.0,%hu.0,%hu.0",
@@ -2416,7 +2459,7 @@
 														IF_DEBUG_INFO(fprintf(stdout, "Double deletion !!!\n"));
 #ifdef ANALYZE_FULL_OUTPUT
 														RegInfoPtr += sprintf(RegInfoPtr, ";GEN=\"%10.10s|%s|%10.10s\"", GenomePtr-10UL, Previously, GenomePtr + strlen(Previously));
-														RegInfoPtr += sprintf(RegInfoPtr, ";ORI=0,0,%hu,%hu,%hu,%hu", 
+														RegInfoPtr += sprintf(RegInfoPtr, ";ORI=0,0,%hu,%hu,%hu,%hu",
 																					  			Significatives[0].data.Accounting[2*iRegion], Significatives[0].data.Accounting[2*iRegion+1],
 																						  		Significatives[1].data.Accounting[2*iRegion], Significatives[1].data.Accounting[2*iRegion+1]);
 														RegInfoPtr += sprintf(RegInfoPtr, ";PHRED=0.0,0.0,0.0,0.0,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
@@ -2425,14 +2468,14 @@
 														assert(RegInfoPtr < &Info[INFO_SIZE]);
 #endif
 														fprintf(stdout, "%s\t%u\t.\t%s\t%s,%s\t50\tPASS\t%s;WND=%u-%u\tGT:DP:AD\t%s:%u:0,%u,%u\n",
-													        Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Allele1, Info, 
+													        Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Allele1, Info,
 													        task->GenomeStart, task->GenomeEnd, GT, nValuableTags, Significatives[0].count, Significatives[1].count);
 													}
 													else {
 														IF_DEBUG_INFO(fprintf(stdout, "Double Insertion !!!\n"));
 #ifdef ANALYZE_FULL_OUTPUT
 														RegInfoPtr += sprintf(RegInfoPtr, ";GEN=\"%10.10s|%s|%10.10s\"", GenomePtr-10UL, Previously, GenomePtr + strlen(Previously));
-														RegInfoPtr += sprintf(RegInfoPtr, ";ORI=0,0,%hu,%hu,%hu,%hu", 
+														RegInfoPtr += sprintf(RegInfoPtr, ";ORI=0,0,%hu,%hu,%hu,%hu",
 																							  	Significatives[0].data.Accounting[2*iRegion], Significatives[0].data.Accounting[2*iRegion+1],
 																						  		Significatives[1].data.Accounting[2*iRegion], Significatives[1].data.Accounting[2*iRegion+1]);
 														RegInfoPtr += sprintf(RegInfoPtr, ";PHRED=0.0,0.0,0.0,0.0,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
@@ -2441,7 +2484,7 @@
 														assert(RegInfoPtr < &Info[INFO_SIZE]);
 #endif
 														fprintf(stdout, "%s\t%u\t.\t%s\t%s,%s\t50\tPASS\t%s;WND=%u-%u\tGT:DP:AD\t%s:%u:0,%u,%u\n",
-													        Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Allele1, Info, 
+													        Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Allele1, Info,
 													        task->GenomeStart, task->GenomeEnd, GT, nValuableTags, Significatives[0].count, Significatives[1].count);
 													}
 												}
@@ -2450,7 +2493,7 @@
 													if ((len0 > lenOrig) && (len1 > lenOrig) ) {
 #ifdef ANALYZE_FULL_OUTPUT
 														RegInfoPtr += sprintf(RegInfoPtr, ";GEN=\"%10.10s|%s|%10.10s\"", GenomePtr-10UL, Previously, GenomePtr + strlen(Previously));
-														RegInfoPtr += sprintf(RegInfoPtr, ";ORI=0,0,%hu,%hu,%hu,%hu", 
+														RegInfoPtr += sprintf(RegInfoPtr, ";ORI=0,0,%hu,%hu,%hu,%hu",
 																						  		Significatives[0].data.Accounting[2*iRegion], Significatives[0].data.Accounting[2*iRegion+1],
 																							  	Significatives[1].data.Accounting[2*iRegion], Significatives[1].data.Accounting[2*iRegion+1]);
 														RegInfoPtr += sprintf(RegInfoPtr, ";PHRED=0.0,0.0,0.0,0.0,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
@@ -2459,34 +2502,34 @@
 														assert(RegInfoPtr < &Info[INFO_SIZE]);
 #endif
 														fprintf(stdout, "%s\t%u\t.\t%s\t%s,%s\t50\tPASS\t%s;WND=%u-%u\tGT:DP:AD\t%s:%u:0,%u,%u\n",
-																	Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Allele1, Info, 
+																	Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Allele1, Info,
 																	task->GenomeStart, task->GenomeEnd, GT, nValuableTags, Significatives[0].count, Significatives[1].count);
-															
+
 													}
 													/* Deletions */
 													else if ((len0 < lenOrig) && (len1 < lenOrig) ) {
 #ifdef ANALYZE_FULL_OUTPUT
 														RegInfoPtr += sprintf(RegInfoPtr, ";GEN=\"%10.10s|%s|%10.10s\"", GenomePtr-10UL, Previously, GenomePtr + strlen(Previously));
-														RegInfoPtr += sprintf(RegInfoPtr, ";ORI=0,0,%hu,%hu,%hu,%hu", 
+														RegInfoPtr += sprintf(RegInfoPtr, ";ORI=0,0,%hu,%hu,%hu,%hu",
 																						  		Significatives[0].data.Accounting[2*iRegion], Significatives[0].data.Accounting[2*iRegion+1],
 																							  	Significatives[1].data.Accounting[2*iRegion], Significatives[1].data.Accounting[2*iRegion+1]);
 														RegInfoPtr += sprintf(RegInfoPtr, ";PHRED=0.0,0.0,0.0,0.0,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
 																	                    sumF0[0], sumF0[1], sumF0[2], sumF0[3], sumF1[0], sumF1[1], sumF1[2], sumF1[3]);
 														RegInfoPtr += sprintf(RegInfoPtr,";GT=%s;DP=%u;AD=0,%u,%u", GT, nValuableTags,  Significatives[0].count, Significatives[1].count);
 														assert(RegInfoPtr < &Info[INFO_SIZE]);
-														
+
 #endif
 														fprintf(stdout, "%s\t%u\t.\t%s\t%s,%s\t50\tPASS\t%s;WND=%u-%u\tGT:DP:AD\t%s:%u:0,%u,%u\n",
-																		Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Allele1, Info, 
+																		Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Allele1, Info,
 																		task->GenomeStart, task->GenomeEnd, GT, nValuableTags, Significatives[0].count, Significatives[1].count);
 													}
 													else {
 														IF_DEBUG_INFO(fprintf(stdout, "Mixture here!!!\n"));
 #ifdef ANALYZE_FULL_OUTPUT
-														RegInfoPtr += sprintf(RegInfoPtr, ";ORI=%hu,%hu,%hu,%hu", 
+														RegInfoPtr += sprintf(RegInfoPtr, ";ORI=%hu,%hu,%hu,%hu",
 																								  Significatives[0].data.Accounting[2*iRegion], Significatives[0].data.Accounting[2*iRegion+1],
 																							  	Significatives[1].data.Accounting[2*iRegion], Significatives[1].data.Accounting[2*iRegion+1]);
-														
+
 #endif
 														/* Full deletion on allele 0 */
 														if (Allele0[1] == '\0' ) {
@@ -2498,13 +2541,13 @@
 															RegInfoPtr = old;
 #endif
 															fprintf(stdout, "%s\t%u\t.\t%s\t%s\t50\tPASS\t%s;WND=%u-%u\tGT:DP:AD\t1|0:%u:%u,%u\n",
-																			Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Info, 
+																			Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Info,
 																			task->GenomeStart, task->GenomeEnd, nValuableTags, Significatives[0].count, Significatives[1].count);
 															/* Trim left */
 															size_t offset = 0UL;
 															while(Allele1[offset] == Previously[offset]) offset++;
-															
-															/* Trim right 
+
+															/* Trim right
 															const int rlen = strlen(Allele1);
 															assert(rlen == strlen(Previously));
 															for (size_t l=rlen-1; l>offset; l--) {
@@ -2512,7 +2555,7 @@
 																	Allele1[l] = '\0';
 																	Previously[l] = '\0';
 																}
-																else 
+																else
 																	break;
 															}*/
 															if (Previously[offset] ==  '\0') offset--;
@@ -2526,7 +2569,7 @@
 																			Genome.virtchr[options.chr].AC, Position+offset, &Previously[offset], &Allele1[offset], Info,
 																			task->GenomeStart, task->GenomeEnd, nValuableTags, Significatives[0].count,
 																			Significatives[1].count);
-															
+
 														}
 														/* Full deletion on allele 1 */
 														else if (Allele1[1] == '\0') {
@@ -2538,12 +2581,12 @@
 															RegInfoPtr = old;
 #endif
 															fprintf(stdout, "%s\t%u\t.\t%s\t%s\t50\tPASS\t%s;WND=%u-%u\tGT:DP:AD\t1|0:%u:%u,%u\n",
-																			Genome.virtchr[options.chr].AC, Position, Previously, Allele1, Info, 
+																			Genome.virtchr[options.chr].AC, Position, Previously, Allele1, Info,
 																			task->GenomeStart, task->GenomeEnd, nValuableTags, Significatives[0].count, Significatives[1].count);
 															/* Trim left */
 															int offset = 0;
 															while(Allele0[offset] == Previously[offset]) offset++;
-															
+
 															/* Trim right
 															const int rlen = (int) strlen(Allele0);
 															assert(rlen == (int) strlen(Previously));
@@ -2552,7 +2595,7 @@
 																	Allele0[l] = '\0';
 																	Previously[l] = '\0';
 																}
-																else 
+																else
 																	break;
 															}*/
 															if (Previously[offset] ==  '\0') offset--;
@@ -2561,27 +2604,27 @@
 															RegInfoPtr += sprintf(RegInfoPtr, ";GEN=\"%10.10s|%s|%10.10s\"", GenomePtr-10UL+offset, &Previously[offset], GenomePtr + strlen(&Previously[offset]));
 															RegInfoPtr += sprintf(RegInfoPtr,";GT=0|1;DP=%u;AD=%u,%u", nValuableTags,  Significatives[0].count, Significatives[1].count);
 															assert(RegInfoPtr < &Info[INFO_SIZE]);
-#endif													
+#endif
 															fprintf(stdout, "%s\t%u\t.\t%s\t%s\t50\tPASS\t%s;WND=%u-%u\tGT:DP:AD\t0|1:%u:%u,%u\n",
-																			Genome.virtchr[options.chr].AC, Position+offset, &Previously[offset], &Allele0[offset], Info, 
+																			Genome.virtchr[options.chr].AC, Position+offset, &Previously[offset], &Allele0[offset], Info,
 																			task->GenomeStart, task->GenomeEnd, nValuableTags, Significatives[0].count, Significatives[1].count);
-															
+
 
 														}
 														else {
-															
+
 #ifdef ANALYZE_FULL_OUTPUT
 															RegInfoPtr += sprintf(RegInfoPtr, ";PHRED=%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
 																										sumF0[0], sumF0[1], sumF0[2], sumF0[3], sumF1[0], sumF1[1], sumF1[2], sumF1[3]);
-															
+
 															RegInfoPtr += sprintf(RegInfoPtr, ";GEN=\"%10.10s|%s|%10.10s\"", GenomePtr-10UL, Previously, GenomePtr + strlen(Previously));
 															RegInfoPtr += sprintf(RegInfoPtr,";GT=%s;DP=%u;AD=%u,%u", GT, nValuableTags,  Significatives[0].count, Significatives[1].count);
 															assert(RegInfoPtr < &Info[INFO_SIZE]);
 #endif
 															fprintf(stdout, "%s\t%u\t.\t%s\t%s,%s\t50\tPASS\t%s;WND=%u-%u\tGT:DP:AD\t%s:%u:%u,%u\n",
-																	Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Allele1, Info, 
+																	Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Allele1, Info,
 																	task->GenomeStart, task->GenomeEnd, GT, nValuableTags, Significatives[0].count, Significatives[1].count);
-														
+
 														}
 													}
 												}
@@ -2589,7 +2632,7 @@
 											else {
 #ifdef ANALYZE_FULL_OUTPUT
 												RegInfoPtr += sprintf(RegInfoPtr, ";GEN=\"%10.10s|%s|%10.10s\"", GenomePtr-10UL, Previously, GenomePtr + strlen(Previously));
-												RegInfoPtr += sprintf(RegInfoPtr, ";ORI=%hu,%hu,%hu,%hu", 
+												RegInfoPtr += sprintf(RegInfoPtr, ";ORI=%hu,%hu,%hu,%hu",
 																						  Significatives[0].data.Accounting[2*iRegion], Significatives[0].data.Accounting[2*iRegion+1],
 																						  Significatives[1].data.Accounting[2*iRegion], Significatives[1].data.Accounting[2*iRegion+1]);
 												RegInfoPtr += sprintf(RegInfoPtr, ";PHRED=%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",
@@ -2599,7 +2642,7 @@
 #endif
 												const char * const ctmp = (GT[0] != '0') ? Allele0 : Allele1;
 												fprintf(stdout, "%s\t%u\t.\t%s\t%s\t50\tPASS\t%s;WND=%u-%u\tGT:DP:AD\t%s:%u:%u,%u\n",
-												        Genome.virtchr[options.chr].AC, Position, Previously, ctmp, Info, 
+												        Genome.virtchr[options.chr].AC, Position, Previously, ctmp, Info,
 												        task->GenomeStart, task->GenomeEnd, GT, nValuableTags,
 												        Significatives[0].count, Significatives[1].count);
 											}
@@ -2627,12 +2670,12 @@
 													assert(RegInfoPtr < &Info[INFO_SIZE]);
 #endif
 													fprintf(stdout, "%s\t%u\t.\t%s\t%s\t50\tPASS\t%s;WND=%u-%u\tGT:DP:AD\t%s:%u:0,%u\n",
-																	Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Info, 
+																	Genome.virtchr[options.chr].AC, Position, Previously, Allele0, Info,
 																	task->GenomeStart, task->GenomeEnd, GT, nValuableTags,
 																	Significatives[0].count);
 												}
 												else {
-													if (len0 == 1) {															
+													if (len0 == 1) {
 #ifdef ANALYZE_FULL_OUTPUT
                             RegInfoPtr += sprintf(RegInfoPtr, ";GEN=\"%10.10s|%1.1s|%10.10s\"", GenomePtr-10UL, Previously, GenomePtr + 1UL);
 														RegInfoPtr += sprintf(RegInfoPtr, ";ORI=%hu,%hu",
@@ -2654,7 +2697,7 @@
 #ifdef ANALYZE_FULL_OUTPUT
 																char * TmpInfoPtr = RegInfoPtr;
                             		TmpInfoPtr += sprintf(TmpInfoPtr, ";GEN=\"%10.10s|%1.1s|%10.10s\"", GenomePtr-10UL+l, &Previously[l], GenomePtr + l + 1UL);
-																TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=%hu,%hu", 
+																TmpInfoPtr += sprintf(TmpInfoPtr, ";ORI=%hu,%hu",
 																									    Significatives[0].data.Accounting[2*iRegion], Significatives[0].data.Accounting[2*iRegion+1]);
 																const unsigned short int * const restrict uiptr = Significatives[0].data.PHred +((l-1UL)+nPos)*4UL;
 																TmpInfoPtr += sprintf(TmpInfoPtr, ";PHRED=%hu.0,%hu.0,%hu.0,%hu.0", uiptr[0], uiptr[1], uiptr[2], uiptr[3]);
@@ -2685,10 +2728,10 @@
 #endif
 #endif
 								}
-#ifdef DEBUG_INFO	
+#ifdef DEBUG_INFO
 							goto noprint;
 							NextRegion:
-								fprintf(stdout, "Region %i was skipped\n", iRegion); 
+								fprintf(stdout, "Region %i was skipped\n", iRegion);
 							noprint:
 								nPos += RegData[iRegion].length;
 #else
@@ -2712,8 +2755,11 @@
 						bcf1_t * const restrict rec = task->VCFRecord;
 						assert(rec);
 						ngt = bcf_get_format_int32(hdr, rec, "GT", &gt, &ngt_arr);
-						assert(ngt == 2);
-						
+#ifdef DEBUG_INFO
+						printf("ngt = %u, expected 2\n", ngt);
+						//assert(ngt == 2);
+#endif
+
 						unsigned int CurrentTypeID = 0U;
 						if (!bcf_is_snp(rec)) {
 							if (rec->d.var[bcf_gt_allele(gt[0])].n < 0 || rec->d.var[bcf_gt_allele(gt[1])].n < 0) {
@@ -2725,7 +2771,7 @@
 						}
 						unsigned int RealMemoryPosition = 1 + rec->pos;
 						if (CurrentTypeID != 0) RealMemoryPosition += 1; /* God knows why, this is necessary !!! */
-							
+
 						fprintf(stdout, "\x1b[2K\x1b[GError data forked %u\t%s\t%s\t%s/%s\t%u/%u\n", RealMemoryPosition, types[CurrentTypeID], rec->d.allele[0], rec->d.allele[bcf_gt_allele(gt[0])], rec->d.allele[bcf_gt_allele(gt[1])], bcf_gt_allele(gt[0]), bcf_gt_allele(gt[1]));
 					}
 #elif defined(DEBUG_INFO)
@@ -2734,7 +2780,7 @@
 					}
 #endif
 				}
-										
+
 			TaskDone:
 				/* Free Tags allocated space */
 				for (unsigned int k=0; k<nTags; k++) free(task->data[k]);
@@ -2748,7 +2794,7 @@
 				pthread_mutex_lock(&thpool->donequeue_p.rwmutex);
 				jobqueue_push(&thpool->donequeue_p, (job_t*) task);
 				pthread_mutex_unlock(&thpool->donequeue_p.rwmutex);
-			
+
 				/* Free extra allocated memory in specific cases */
 				if (nTags > 4000) {
 					free(Buffer);
@@ -2770,19 +2816,19 @@
 #endif
 				}
 			}
-		
+
 			/* Signal I am no longer working */
 			pthread_mutex_lock(&thpool->thcount_lock);
 			thpool->num_threads_working--;
 			pthread_mutex_unlock(&thpool->thcount_lock);
 		}
 	}
-	
+
 	/* Signal I am done */
 	pthread_mutex_lock(&thpool->thcount_lock);
 	thpool->num_threads_alive--;
 	pthread_mutex_unlock(&thpool->thcount_lock);
-	
+
 	if (GenomeBuffer) free(GenomeBuffer);
 	if (PFResults) _mm_free(PFResults);
 	if (TransposePFResults) _mm_free(TransposePFResults);
@@ -2792,7 +2838,7 @@
 	if (WORK) _mm_free(WORK);
 	if (CellList) free(CellList);
 	if (Deletions) free(Deletions);
-#ifdef ANALYZE_FULL_OUTPUT	
+#ifdef ANALYZE_FULL_OUTPUT
 	if (RegionsStat) _mm_free(RegionsStat);
 #endif
 	return (void*) 0;

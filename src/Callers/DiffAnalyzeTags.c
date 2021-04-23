@@ -1408,7 +1408,7 @@ void* DiffAnalyzeTags(threadpool_t * restrict const thpool)
 							/* Adding a dynamic threshold based upon total number */
 							for(size_t k=0UL; k<2UL; k++) {
 								const unsigned int total = Counters[k][0] + Counters[k][1] + Counters[k][2] + Counters[k][3] + Counters[k][4];
-								const unsigned int MinDyn = ((20*total)/100 < MINIMUM_APPEARANCE) ? MINIMUM_APPEARANCE : (20*total)/100;
+								const unsigned int MinDyn = ((options.minorAllelePct*total)/100 < MINIMUM_APPEARANCE) ? MINIMUM_APPEARANCE : (options.minorAllelePct*total)/100;
 								for (int l=0;l<5;l++) if (Counters[k][l] < MinDyn) {
 									Useless[k] += Counters[k][l];
 									Counters[k][l] = 0U;
