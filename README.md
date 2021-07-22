@@ -6,7 +6,7 @@
 
     Copyright (C) SIB  - Swiss Institute of Bioinformatics,   2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
     Copyright (C) UNIL - University of Lausanne, Switzerland  2019-2020 Nicolas Guex and Christian Iseli
-    Copyright (C) EPFL - EPFL, Lausanne, Switzerland               2020 Christian Iseli
+    Copyright (C) EPFL - EPFL, Lausanne, Switzerland          2020-2021 Christian Iseli
 
 
     This program is free software: you can redistribute it and/or modify
@@ -37,7 +37,7 @@
 
 	Version information
 
-	Version:	2.1  May 2020 Public release of code under GPL2+ license
+	Version:	2.3.1  July 2021 Public release of code under GPL2+ license
 
 
 
@@ -48,16 +48,16 @@
 ```bash
 mkdir /tmp/tst
 cd /tmp/tst
-git clone git@github.com:sib-swiss/micmap.git
-cd micmap/third-party/
-git clone git@github.com:json-c/json-c.git
-cd json-c/
+git clone --recursive git@github.com:sib-swiss/micmap.git
+cd micmap/third-party/json-c/
 mkdir build
 cd build/
 ../cmake-configure
 make
 mv * .. # say n to move the existing directories
-cd ../../..
+cd ..
+rm -rf build
+cd ../..
 ```
 
 - create a build directory and build the code
@@ -66,6 +66,18 @@ cd ../../..
 mkdir build
 cd build
 cmake ../ -DGTL_TESTS_PATH=/tmp/GTL -DCMAKE_INSTALL_PREFIX=/data6/tools -DUSE_RPATH=0 -DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib
+make
+```
+
+- it is also possible to compile using intel's compiler
+
+```bash
+source /opt/intel/bin/compilervars.sh intel64
+mkdir build
+cd build
+CC=icc cmake ../ -DGTL_TESTS_PATH=/tmp/GTL -DCMAKE_INSTALL_PREFIX=/data6/tools -DUSE_RPATH=0 -DCMAKE_INSTALL_RPATH=\$ORIGIN/../lib
+ccmake .. # add -static-intel to the CMAKE_C_FLAGS_* flags (need to toggle in expert mode, edit, then configure and generate)
+cmake .. # to check the CFLAGS contain -static-intel
 make
 ```
 
