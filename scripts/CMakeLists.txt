@@ -7,7 +7,9 @@ INSTALL (FILES
 	   grabAllNonContacts
 	   mergeVCFandSelect
 	   mergeVCFdetails
+	   MicMapBcHiC2table
 	   MicMapChIP2bam
+	   MicMapChIPse2bam
 	   MicMapExome2bam
 	   MicMapExomeUMI2bam
 	   MicMapHiC2table
