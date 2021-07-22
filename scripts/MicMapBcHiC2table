@@ -6,7 +6,7 @@
 #      Mapping of short reads in fastq format onto a reference
 #
 #
-#  Copyright (C) UNIL - University of Lausanne, Switzerland      2020 Nicolas Guex and Christian Iseli
+#  Copyright (C) UNIL - University of Lausanne, Switzerland                    2020 Nicolas Guex and Christian Iseli
 #  Copyright (C) EPFL - Ecole Polytechnique Fédérale de Lausanne, Switzerland  2021 Christian Iseli
 #
 #
@@ -25,7 +25,7 @@
 #
 #
 #      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
-#      Contacts:   Nicolas.Guex@unil.ch and christian.iseli@epfl.ch
+#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@epfl.ch
 #      Repository: https://github.com/sib-swiss/micmap
 #
 # ------------------------------------------------------------------------------------------------------------------------
@@ -40,9 +40,6 @@ HT=/var/lib/hugetlbfs/global/pagesize-1GB
 # GTL binaries
 export GTLBINDIR=/usr/local/bin
 
-# perl code to split reads at /GATCGATC/ /TTATAA/ /GATCTAA/ /TTAGATC/ and limit the length to 60 nucleotides
-perlCode='s/ .*$//;print;$_=<>;print substr($_,0,28);$_=substr $_,28;s/GATCGATC/GATC GATC/g;s/TTATAA/TTAA TTAA/g;s/GATCTAA/GATC TTAA/g;s/TTAGATC/TTAA GATC/g;s/\s.*$//s;$_=substr $_,0,32;$l=length;$l+=28;print $_,"\n";$_=<>;print;$_=<>;print substr($_,0,$l),"\n"'
-
 destdir=/tmp
 tempdir=/tmp
 tables=/data6
@@ -50,7 +47,7 @@ M=24
 
 function usage ()
 {
-  echo "Usage: $0 [options] -s <restriction_sites> <file_R1.fq.gz> <file_R2.fq.gz> <name>" >&2
+  echo "Usage: $0 [options] -b <barcode> -s <restriction_sites> <file_R1.fq.gz> <file_R2.fq.gz> <name>" >&2
   echo "" >&2
   echo "This script calls MicMap tools to map RNAseq reads from the given pair of FASTQ files" >&2
   echo "and produces an output BAM file <name>_<ref>.bam in the destination directory" >&2
@@ -69,8 +66,11 @@ function usage ()
   exit 1
 }
 
-while getopts ":d:hr:t:T:R:s:G:L:S:" opt; do
+while getopts ":b:d:hr:t:T:R:s:G:L:S:" opt; do
   case $opt in
+    b)
+      barcode=$OPTARG
+      ;;
     d)
       destdir=$OPTARG
       ;;
@@ -112,6 +112,9 @@ while getopts ":d:hr:t:T:R:s:G:L:S:" opt; do
   esac
 done
 
+if [[ "X$barcode" = "X" ]]; then
+  usage
+fi
 if [[ "X$sites" = "X" ]]; then
   usage
 fi
@@ -174,8 +177,39 @@ fi
 
 echo "Start processing sample $SM on `date`"
 
-echo "Running MicMap on paired files $f1 $f2"
-MicMap -g $HT/$R.bin -p $HT/start0. -A $M -G 448 -1 <(gzip -dc $f1 | perl -ne "$perlCode") -2 <(gzip -dc $f2 | perl -ne "$perlCode") -r $D
+echo "Running MicMap on paired files '$f1' '$f2' for barcode $barcode"
+# start a background pipeline with two processes running forever
+tail -f /dev/null | tail -f /dev/null &
+# save the process ids
+PID2=$!
+PID1=$(jobs -p %+)
+# hijack the pipe's file descriptors using procfs
+exec 3>/proc/$PID1/fd/1 4</proc/$PID2/fd/0
+# kill the background processes we no longer need
+# (using disown suppresses the 'Terminated' message)
+disown $PID2
+kill $PID1 $PID2
+# repeat to get a couple more
+tail -f /dev/null | tail -f /dev/null &
+# save the process ids
+PID2=$!
+PID1=$(jobs -p %+)
+# hijack the pipe's file descriptors using procfs
+exec 5>/proc/$PID1/fd/1 6</proc/$PID2/fd/0
+# kill the background processes we no longer need
+# (using disown suppresses the 'Terminated' message)
+disown $PID2
+kill $PID1 $PID2
+# anything we write to fd 3 and 5 can be read back from fd 4 and 6
+./fqBarDigest $barcode "$f1" "$f2" >&3 2>&5 &
+PID1=$!
+# need to close input side of pipes, otherwise we do not get EOF condition
+MicMap -g $HT/$R.bin -p $HT/start0. -A $M -G 448 -1 /dev/fd/4 -2 /dev/fd/6 -r $D 3>&- 5>&- &
+wait $PID1
+# close the file descriptors when fqBarDigest is finished so that MicMap terminates as well
+exec 3>&- 5>&-
+wait
+exec 4<&- 6<&-
 
 echo "Sorting GTL for sample $SM"
 sortCompressCall -l -1 -t $tables -N $tempdir -d $destdir -r $R -D -C $name || exit 1

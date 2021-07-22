@@ -40,6 +40,9 @@ HT=/var/lib/hugetlbfs/global/pagesize-1GB
 # GTL binaries
 export GTLBINDIR=/usr/local/bin
 
+# PICARD tools
+PICARD=/usr/local/share/java
+
 destdir=/tmp
 tempdir=/tmp
 tables=/data6
@@ -47,9 +50,9 @@ M=24
 
 function usage ()
 {
-  echo "Usage: $0 [options] <file_R1.fq.gz> <file_R2.fq.gz> <name>" >&2
+  echo "Usage: $0 [options] <file.fq.gz> <name>" >&2
   echo "" >&2
-  echo "This script calls MicMap tools to map RNAseq reads from the given pair of FASTQ files" >&2
+  echo "This script calls MicMap tools to map single end ChIPseq reads from the given FASTQ file" >&2
   echo "and produces an output BAM file <name>_<ref>.bam in the destination directory" >&2
   echo "" >&2
   echo "options (default values are given in square brackets):" >&2
@@ -105,16 +108,15 @@ while getopts ":d:hr:t:T:R:G:L:S:" opt; do
   esac
 done
 
-if (( $# - $OPTIND != 2 )); then
+if (( $# - $OPTIND != 1 )); then
   usage
 fi
 shift $(($OPTIND - 1))
 f1=$1
-f2=$2
-name=${3}_c50_$R
-if [[ "X$RG" = "X" ]]; then RG=$3; fi
-if [[ "X$SM" = "X" ]]; then SM=$3; fi
-if [[ "X$LB" = "X" ]]; then LB=$3; fi
+name=${2}_$R
+if [[ "X$RG" = "X" ]]; then RG=$2; fi
+if [[ "X$SM" = "X" ]]; then SM=$2; fi
+if [[ "X$LB" = "X" ]]; then LB=$2; fi
 
 # Tables
 T=$tables/$R
@@ -162,18 +164,16 @@ if [[ ! -s $HT/$R.bin ]]; then
   echo "done"
 fi
 
-echo "Start processing sample $SM on `date`"
-
-# FIXME - check for very small put files - there seems to be a deadlock issue to be debugged at some point
-small=`gzip -dc $f1 | head -4000000 | wc -l`
-small=$(( small / 4 / 131072 ))
-if [[ $small -lt 3 ]]; then
-  echo "Running MicMap on small paired files $f1 $f2"
-  MicMap -g $HT/$R.bin -p $HT/start0. -D 1 -d 1 -A 1 -a 1 -W 1 -w 1 -G 448 -1 <(gzip -dc $f1 | sed 's/ .*$//') -2 <(gzip -dc $f2 | sed 's/ .*$//') -r $D
+sizef1=`stat -c %s $f1`
+if [[ $sizef1 -lt 20000000 ]]; then
+  echo "Start processing small sample $SM on `date`"
+  small=" -a 1 -d 1 -W 1 -w 1"
 else
-  echo "Running MicMap on paired files $f1 $f2"
-  MicMap -g $HT/$R.bin -p $HT/start0. -A $M -G 448 -1 <(gzip -dc $f1 | sed 's/ .*$//') -2 <(gzip -dc $f2 | sed 's/ .*$//') -r $D
+  echo "Start processing sample $SM on `date`"
+  small=
 fi
+echo "Running MicMap on single end file $f1"
+MicMap -g $HT/$R.bin -p $HT/start0. -A $M$small -G 448 -1 <(gzip -dc $f1 | trimAndSplit 512 1) -2 <(gzip -dc $f1 | trimAndSplit 512 2) -r $D
 
 echo "Sorting GTL for sample $SM"
 sortCompressCall -l -1 -t $tables -N $tempdir -d $destdir -r $R -D -C $name || exit 1
@@ -183,23 +183,24 @@ pushd $destdir
 
 echo "Generating $name.raw.bam"
 # do not output half-mapped (fail picard validation tests) and unmapped - not useful in any case
-samtools view -b -@$M <(cat $T/header_${R}; GTLdecompress -f -g $T/$R.bin -r <(cat $destdir/$name/*.gtl) -p -n -m -a -c -o SAM 2>/dev/null) >${name}_raw.bam || exit 1
+# filter out second read that was introduced above; filter out reads with deletions longer than 9
+samtools view -b -@$M <(cat $T/header_${R}; GTLdecompress -f -g $T/$R.bin -r <(cat $destdir/$name/*.gtl) -p -n -m -a -c -o SAM 2>/dev/null | perl -ne '@F=split /\t/;next if $F[1] & 0x080;next if $F[5] =~ /\d\dD/;$F[1] &= 0xF14;$F[6]="*";$F[7]=0;$F[8]=0;print join("\t",@F)') >${name}_raw.bam || exit 1
 
 echo "Add ReadGroup info RG:$RG LB:$LB SM:$SM PL:ILLUMINA"
 samtools addreplacerg -r "ID:$RG" -r "LB:$LB" -r "SM:$SM" -r 'PL:ILLUMINA' -o ${name}_rg.bam -@$M ${name}_raw.bam || exit 1
 rm ${name}_raw.bam
 
-echo "Sort by name"
-samtools sort -n -@$M -m 2g -o ${name}_nsort.bam ${name}_rg.bam || exit 1
-rm ${name}_rg.bam
+#echo "Sort by name"
+#samtools sort -n -@$M -m 2g -o ${name}_nsort.bam ${name}_rg.bam || exit 1
+#rm ${name}_rg.bam
 
-echo "Fix mate info"
-samtools fixmate -m -@$M ${name}_nsort.bam ${name}_fix.bam || exit 1
-rm ${name}_nsort.bam
+#echo "Fix mate info"
+#samtools fixmate -m -@$M ${name}_nsort.bam ${name}_fix.bam || exit 1
+#rm ${name}_nsort.bam
 
 echo "Sort by position"
-samtools sort -@$M -m 2g -o ${name}_sort.bam ${name}_fix.bam || exit 1
-rm ${name}_fix.bam
+samtools sort -@$M -m 2g -o ${name}_sort.bam ${name}_rg.bam || exit 1
+rm ${name}_rg.bam
 
 echo "Add NM info"
 samtools calmd -b -@$M ${name}_sort.bam $T/$R.fa.gz >${name}_nm.bam || exit 1
@@ -211,8 +212,47 @@ rm ${name}_nm.bam
 # make sure the index file is more recent than the bam
 touch ${name}.bam.csi
 
+#java -Xmx16g -jar $PICARD/picard.jar ValidateSamFile I=${name}.bam R=$T/$R.fa.gz IGNORE=INVALID_TAG_NM || exit 1
+java -Xmx16g -jar $PICARD/picard.jar ValidateSamFile I=${name}.bam || exit 1
+
 echo "Completed processing sample $name on `date`"
 popd
 exit 0
 
 GTLBINDIR=~/src/MICMAP/bin samtools ADVIEW -C -G /data6/dm6/dm6.bin -1 ChIPseqCTC_Cp190_KO_Cp190_1_dm6 -2 ChIPseqCTC_Cp190_KO_Cp190_1.bam -c 1 -p 18490
+
+# 0x001 read paired
+# 0x002 read mapped in proper pair
+# 0x004 read unmapped
+# 0x008 mate unmapped
+# 0x010 read reverse strand
+# 0x020 mate reverse strand
+# 0x040 first in pair
+# 0x080 second in pair
+# 0x100 not primary alignment
+# 0x200 read fails platform/vendor quality checks
+# 0x400 read is PCR or optical duplicate
+# 0x800 supplementary alignment
+
+cig-shiva_chris: samtools view SRR837791.CP190.S2.sorted.bam|cut -f 1-9|head
+SRR837791.CP190.S2.3396487      16      chr2L   3       1       71M     *       0       0
+SRR837791.CP190.S2.3144811      0       chr2L   12      1       71M     *       0       0
+SRR837791.CP190.S2.6471645      0       chr2L   15      1       71M     *       0       0
+SRR837791.CP190.S2.9098132      16      chr2L   18      1       71M     *       0       0
+SRR837791.CP190.S2.9173439      0       chr2L   27      1       70M     *       0       0
+SRR837791.CP190.S2.3067851      16      chr2L   48      1       71M     *       0       0
+SRR837791.CP190.S2.6223123      16      chr2L   54      1       71M     *       0       0
+SRR837791.CP190.S2.5351211      16      chr2L   56      1       70M     *       0       0
+SRR837791.CP190.S2.9816480      0       chr2L   98      1       71M     *       0       0
+SRR837791.CP190.S2.6646164      0       chr2L   103     1       71M     *       0       0
+cig-shiva_chris: samtools view SRR837791.CP190.S2.sorted.bam|cut -f 1-9|tail
+SRR837791.CP190.S2.10008499     4       *       0       0       *       *       0       0
+SRR837791.CP190.S2.10008510     4       *       0       0       *       *       0       0
+SRR837791.CP190.S2.10008498     4       *       0       0       *       *       0       0
+SRR837791.CP190.S2.10008561     4       *       0       0       *       *       0       0
+SRR837791.CP190.S2.10008610     4       *       0       0       *       *       0       0
+SRR837791.CP190.S2.10008683     4       *       0       0       *       *       0       0
+SRR837791.CP190.S2.10008707     4       *       0       0       *       *       0       0
+SRR837791.CP190.S2.10008710     4       *       0       0       *       *       0       0
+SRR837791.CP190.S2.10008730     4       *       0       0       *       *       0       0
+SRR837791.CP190.S2.10008742     4       *       0       0       *       *       0       0

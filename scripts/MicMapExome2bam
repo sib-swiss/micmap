@@ -7,6 +7,7 @@
 #
 #
 #  Copyright (C) UNIL - University of Lausanne, Switzerland      2020 Nicolas Guex and Christian Iseli
+#  Copyright (C) EPFL - Ecole Polytechnique Fédérale de Lausanne, Switzerland  2021 Christian Iseli
 #
 #
 #  This program is free software: you can redistribute it and/or modify
@@ -24,7 +25,7 @@
 #
 #
 #      Code:       Nicolas Guex, Thierry Schuepbach and Christian Iseli
-#      Contacts:   Nicolas.Guex@unil.ch and Christian.Iseli@unil.ch
+#      Contacts:   Nicolas.Guex@unil.ch and christian.iseli@epfl.ch
 #      Repository: https://github.com/sib-swiss/micmap
 #
 # ------------------------------------------------------------------------------------------------------------------------
@@ -175,7 +176,7 @@ else
   MicMap -g $HT/$R.bin -p $HT/start0. -A $M -G 448 -1 <(gzip -dc $f1 | perl -ne 's/ .*$//;print') -2 <(gzip -dc $f2 | perl -ne 's/ .*$//;print') -r $D
 
   echo "Sorting GTL for sample $SM"
-  sortCompressCall -l 2 -N $tempdir -d $destdir -r $R -D -C $name || exit 1
+  sortCompressCall -l -1 -t $tables -N $tempdir -d $destdir -r $R -D -C $name || exit 1
   mv $tempdir/${name}_log.txt $destdir
 fi
 
