@@ -348,14 +348,15 @@ while ( <FD> ) {
       } else {
 	# fix 0 coordinate
 	if ($tag1pos == 0) {
-	  if ($cig1 =~ s/^(\d+)I(\d+)M//) {
+	  if ($cig1 =~ s/^(\d+)([IS])(\d+)M//) {
 	    my $iCnt = $1;
-	    my $mCnt = $2;
+	    my $code = $2;
+	    my $mCnt = $3;
 	    $iCnt += 1;
 	    $mCnt -= 1;
 	    $tag1pos += 1;
 	    $delta -= 1;
-	    $cig1 = sprintf "%uI%uM%s", $iCnt, $mCnt, $cig1;
+	    $cig1 = sprintf "%u%s%uM%s", $iCnt, $code, $mCnt, $cig1;
 	    if ($ilen < 0) {
 	      $ilen += 1;
 	    } else {
