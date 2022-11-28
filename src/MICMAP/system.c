@@ -7,6 +7,7 @@
  *
  *  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
  *  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+ *  Copyright (C) EPFL - EPFL, Lausanne, Switzerland              2022 Christian Iseli
  *
  *
  *  This program is free software: you can redistribute it and/or modify
@@ -941,7 +942,10 @@ void getSystemInfo(SystemInfo * const info)
   for (size_t i=0; i<13; ++i) info->CPU_Vendor[i] = '\0';
   
   /* Available number of logical processor seen by OS */
-  info->nOverallCores = (unsigned int) sysconf(_SC_NPROCESSORS_CONF);
+  info->nOverallCores = (unsigned int) sysconf(_SC_NPROCESSORS_ONLN);
+#ifdef __SYSTEM_DEBUG__
+  printf("Detected %u precessors online\n", info->nOverallCores);
+#endif
   const char NOBrand[] = "Not supported by this cpu"; 
   strcpy(info->CPU_Name, NOBrand);
   

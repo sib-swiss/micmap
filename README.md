@@ -6,7 +6,7 @@
 
     Copyright (C) SIB  - Swiss Institute of Bioinformatics,   2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
     Copyright (C) UNIL - University of Lausanne, Switzerland  2019-2020 Nicolas Guex and Christian Iseli
-    Copyright (C) EPFL - EPFL, Lausanne, Switzerland          2020-2021 Christian Iseli
+    Copyright (C) EPFL - EPFL, Lausanne, Switzerland          2020-2022 Christian Iseli
 
 
     This program is free software: you can redistribute it and/or modify
@@ -37,7 +37,7 @@
 
 	Version information
 
-	Version:	2.3.1  July 2021 Public release of code under GPL2+ license
+	Version:	2.4  November 2022 Public release of code under GPL2+ license
 
 
 

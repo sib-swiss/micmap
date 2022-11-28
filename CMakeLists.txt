@@ -5,8 +5,8 @@ MESSAGE(STATUS "+---------------------------------------------------------------
 MESSAGE(STATUS "|                              MICMAP                                |")
 MESSAGE(STATUS "+--------------------------------------------------------------------+")
 MESSAGE(STATUS "| Copyright (C) 2015-2019 SIB Swiss Institute of Bioinformatics      |")
-MESSAGE(STATUS "| Copyright (C) 2019-2021 University of Lausanne, Switzerland        |")
-MESSAGE(STATUS "| Copyright (C) 2020-2021 EPFL, Lausanne, Switzerland                |")
+MESSAGE(STATUS "| Copyright (C) 2019-2022 University of Lausanne, Switzerland        |")
+MESSAGE(STATUS "| Copyright (C) 2020-2022 EPFL, Lausanne, Switzerland                |")
 MESSAGE(STATUS "|         Nicolas Guex       (nicolas.guex@unil.ch)                  |")
 MESSAGE(STATUS "|         Christian Iseli    (christian.iseli@epfl.ch)               |")
 MESSAGE(STATUS "|         Thierry Schuepbach                                         |")
@@ -34,7 +34,7 @@ enable_testing()
 # Version with GIT
 #
 SET(MAJOR_VERSION "2")
-SET(MINOR_VERSION "3")
+SET(MINOR_VERSION "4")
 SET(VERSION "${MAJOR_VERSION}.${MINOR_VERSION}")
 
 FIND_PACKAGE(Git REQUIRED)

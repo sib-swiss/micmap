@@ -7,6 +7,7 @@
  *
  *  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
  *  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+ *  Copyright (C) EPFL - EPFL, Lausanne, Switzerland              2022 Christian Iseli
  *
  *
  *  This program is free software: you can redistribute it and/or modify
@@ -101,7 +102,7 @@ enum PROCESS_STATS_TYPE {
 	Alternate=14
 };
 
-union Statistics {
+typedef union Statistics {
 	unsigned int Counter[16];
 	__m128i Vector[4];
 } Statistics_t;

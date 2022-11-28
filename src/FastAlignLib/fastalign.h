@@ -7,6 +7,7 @@
  *
  *  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
  *  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+ *  Copyright (C) EPFL - EPFL, Lausanne, Switzerland              2022 Christian Iseli
  *
  *
  *  This program is free software: you can redistribute it and/or modify
@@ -93,7 +94,7 @@ extern ComputeFunctions_t mic_systolic;
 extern ComputeFunctions_t mic_systolic_simplified;
 #else
 extern ComputeFunctions_t cpu_std;
-ComputeFunctions_t cpu_std_border;
+extern ComputeFunctions_t cpu_std_border;
 #endif
 
 typedef int StoredIntegerFormat;

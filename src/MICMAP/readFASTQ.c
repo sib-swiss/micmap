@@ -7,6 +7,7 @@
  *
  *  Copyright (C) SIB  - Swiss Institute of Bioinformatics,  2015-2019 Nicolas Guex, Thierry Schuepbach and Christian Iseli
  *  Copyright (C) UNIL - University of Lausanne, Switzerland      2019 Nicolas Guex and Christian Iseli
+ *  Copyright (C) EPFL - EPFL, Lausanne, Switzerland              2022 Christian Iseli
  *
  *
  *  This program is free software: you can redistribute it and/or modify
@@ -263,7 +264,7 @@ void* readFASTQ(FASTQ * const fastq)
 				//////////////////////////////////////////////////////////////////////////////////////////////
 				// FASTQ Header
 				read_line_buf(&rb2, fd2, tmphdr, kHdrSize);
-				assert(rb2.lc - 1 < kHdrSize);
+				assert(rb2.lc > 0 && rb2.lc - 1 < kHdrSize);
 				tmphdr[rb2.lc - 1] = '\0';
 				// identifies where second hdr starts to differ from first one.
 				while(tmphdr[pos] == PreviousTag->Header[pos]) 
